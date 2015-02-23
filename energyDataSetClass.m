@@ -208,52 +208,41 @@ classdef energyDataSetClass < prtDataSetClass
         end
         
         %% Visualize the events on top of the aggregate and submetered signals
+        % eventTimes is an energyEventClass object
+        % Send in the eventTimes object from the device that you want to
+        % see, and specify the device with 'focusDevice'.
         function markEventTimes(obj,eventTimes,varargin)
-            parserIn.focusDevice = 2:obj.nFeatures;
+            % Assume that the user wants the events to be marked in
+            % aggregate.
+            parserIn.focusDevice = 1;%2:obj.nFeatures;
             parserIn.timeScale = 'hrs';
-            parserOut = prtUtilSimpleInputParser(parserIn,varargin);
+            parsedOut = prtUtilSimpleInputParser(parserIn,varargin);
+            focusDevice = parsedOut.focusDevice;
+            timeScale = parsedOut.timeScale;
             
-            for dInc = 1:numel(parserOut.focusDevice)
-                focusDevice = parserOut.focusDevice(dInc);
+            for dInc = 1:numel(focusDevice)
+                focusDevice = focusDevice(dInc);
                 xT = obj.getTimesFromUTC('zeroTimes',false,'timeScale','days');
-                yT = obj.getTimesFromUTC('timeScale',parserOut.timeScale);
+                yT = obj.getTimesFromUTC('timeScale',timeScale);
                 
                 %% Aggregate plot
-                figure;
-                plot(yT,obj.data(:,1))
-                hold on
-                
-                [~,onIdx] = intersect(xT,eventTimes(focusDevice).onEventsTimes);
-                [~,offIdx] = intersect(xT,eventTimes(focusDevice).offEventsTimes);
-                
-                plot(yT(onIdx),obj.data(onIdx,1),'go')
-                plot(yT(offIdx),obj.data(offIdx,1),'ro')
-                
-                title([obj.getFeatureNames{focusDevice},' events in aggregate signal'],'Interpreter','None')
-                l = legend([obj.getFeatureNames{focusDevice},' power'],'On events','Off events');
-                set(l,'Interpreter','None')
-                hold off
-                
-                xlabel(['Time (',parserOut.timeScale,')'])
-                ylabel('Power (W)')
-                
-                
-                %% Submetered plot
                 figure;
                 plot(yT,obj.data(:,focusDevice))
                 hold on
                 
+                [~,onIdx] = intersect(xT,eventTimes.onEventsTimes);
+                [~,offIdx] = intersect(xT,eventTimes.offEventsTimes);
+                
                 plot(yT(onIdx),obj.data(onIdx,focusDevice),'go')
                 plot(yT(offIdx),obj.data(offIdx,focusDevice),'ro')
                 
-                title([obj.getFeatureNames{focusDevice},' events in the submetered device'],'Interpreter','None')
+                title([obj.getFeatureNames{focusDevice},' with marked events'],'Interpreter','None')
                 l = legend([obj.getFeatureNames{focusDevice},' power'],'On events','Off events');
                 set(l,'Interpreter','None')
                 hold off
                 
-                xlabel(['Time (',parserOut.timeScale,')'])
+                xlabel(['Time (',timeScale,')'])
                 ylabel('Power (W)')
-                
                 
             end
             
@@ -329,6 +318,104 @@ classdef energyDataSetClass < prtDataSetClass
             end
             
             
+        end
+        
+        %% Get an eventTimes object based on the events in the userData of the dataset
+        function bluedEvents = getBluedEvents(obj,varargin)
+            options.phase = 'both';
+            options.device = [];
+            parsedOut = prtUtilSimpleInputParser(options,varargin);
+            bluedPhase = lower(parsedOut.phase);
+            device = parsedOut.device;
+            
+            yT = obj.getTimesFromUTC('timeScale','days','zeroTimes',false);
+            
+            obj.userData.eventIdx = getEventIdx(yT,obj.userData.eventTimes);
+            
+            if strcmp(bluedPhase,'a')
+                bluedPhase = 1;
+            elseif strcmp(bluedPhase,'b')
+                bluedPhase = 2;
+            end
+            
+            bluedEvents = energyEventClass;
+            bluedEvents.className = 'combinedEvents';
+            bluedEvents.house = obj.name;
+            bluedEvents.houseNumber = 1;
+            
+            if isscalar(device)
+                bluedEvents.classNumber = device;
+                bluedEvents.className = obj.userData.deviceNames(device);
+            else
+                bluedEvents.classNumber = 1;
+            end
+            
+            uD = obj.userData;
+            
+            nEvents = numel(uD.eventIdx);
+            
+            includeIndex = false(nEvents,1);
+            
+            if isempty(device)
+                includeIndex = true(nEvents,1); %#ok<PREALL>
+            else
+                for eInc = 1:numel(uD.eventIdx)
+                    includeIndex(eInc) = device == uD.eventTypes(eInc);
+                end
+            end
+            
+            
+            
+            switch bluedPhase
+                case 'both'
+                    deviceOn = uD.onEvents(includeIndex);
+                    deviceIdx = uD.eventIdx(includeIndex);
+                    
+                    onEventsIdx = deviceIdx(deviceOn);
+                    
+                    offEventsIdx = deviceIdx(~deviceOn);
+                    
+                case 1 % Just phase A
+                    deviceOn = uD.onEvents(includeIndex && strcmp(uD.phase(includeIndex),'A'));
+                    deviceIdx = uD.eventIdx(includeIndex && strcmp(uD.phase(includeIndex),'A'));
+                    
+                    onEventsIdx = deviceIdx(deviceOn);
+                    offEventsIdx = deviceIdx(~deviceOn);
+                    
+                    if any(strcmp(uD.phase(includeIndex)),'B')
+                        warning('You included devices from phase B that were ignored here');
+                    end
+                    
+                case 2
+                    deviceOn = uD.onEvents(includeIndex && strcmp(uD.phase(includeIndex),'B'));
+                    deviceIdx = uD.eventIdx(includeIndex && strcmp(uD.phase(includeIndex),'B'));
+                    
+                    onEventsIdx = deviceIdx(deviceOn);
+                    offEventsIdx = deviceIdx(~deviceOn);
+                    
+                    
+                    if any(strcmp(uD.phase(includeIndex)),'A')
+                        warning('You included devices from phase A that were ignored here');
+                    end
+                    
+                otherwise
+                    %% Assume both are desired
+                    % Get events from both phases.
+                    deviceOn = uD.onEvents(includeIndex);
+                    deviceIdx = uD.eventIdx(includeIndex);
+                    
+                    onEventsIdx = deviceIdx(deviceOn);
+                    
+                    offEventsIdx = deviceIdx(~deviceOn);
+                    
+            end
+            
+            bluedEvents.onEventsIndex = onEventsIdx;
+            bluedEvents.offEventsIndex = offEventsIdx;
+            
+            bluedEvents.onEventsTimes = yT(onEventsIdx);
+            bluedEvents.offEventsTimes = yT(offEventsIdx);
+                    
         end
         
     end
