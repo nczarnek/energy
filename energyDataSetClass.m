@@ -54,7 +54,6 @@ classdef energyDataSetClass < prtDataSetClass
         end
         
         
-        
         %% findComponentEnergy
         % This method calculates the energy used by each device
         function [componentEnergy,energyStruct] = findComponentEnergy(obj,varargin)
@@ -126,12 +125,6 @@ classdef energyDataSetClass < prtDataSetClass
             
             obj = obj.retainObservations(dIdx);
         end
-        
-        
-        
-        
-        
-        
         
         
         %% Find the means of clusters based on a GMM.
@@ -354,11 +347,11 @@ classdef energyDataSetClass < prtDataSetClass
             
             nEvents = numel(uD.eventIdx);
             
-            includeIndex = false(nEvents,1);
             
             if isempty(device)
-                includeIndex = true(nEvents,1); %#ok<PREALL>
+                includeIndex = true(nEvents,1);
             else
+                includeIndex = false(nEvents,1);
                 for eInc = 1:numel(uD.eventIdx)
                     includeIndex(eInc) = device == uD.eventTypes(eInc);
                 end
@@ -376,25 +369,29 @@ classdef energyDataSetClass < prtDataSetClass
                     offEventsIdx = deviceIdx(~deviceOn);
                     
                 case 1 % Just phase A
-                    deviceOn = uD.onEvents(includeIndex && strcmp(uD.phase(includeIndex),'A'));
-                    deviceIdx = uD.eventIdx(includeIndex && strcmp(uD.phase(includeIndex),'A'));
+                    keepIdx = includeIndex' & strcmp(uD.phase(includeIndex),'A');
+                    
+                    deviceOn = uD.onEvents(keepIdx);
+                    deviceIdx = uD.eventIdx(keepIdx);
                     
                     onEventsIdx = deviceIdx(deviceOn);
                     offEventsIdx = deviceIdx(~deviceOn);
                     
-                    if any(strcmp(uD.phase(includeIndex)),'B')
+                    if any(strcmp(uD.phase(keepIdx),'B'))
                         warning('You included devices from phase B that were ignored here');
                     end
                     
                 case 2
-                    deviceOn = uD.onEvents(includeIndex && strcmp(uD.phase(includeIndex),'B'));
-                    deviceIdx = uD.eventIdx(includeIndex && strcmp(uD.phase(includeIndex),'B'));
+                    keepIdx = includeIndex' & strcmp(uD.phase(includeIndex),'B');
+                    
+                    deviceOn = uD.onEvents(keepIdx);
+                    deviceIdx = uD.eventIdx(keepIdx);
                     
                     onEventsIdx = deviceIdx(deviceOn);
                     offEventsIdx = deviceIdx(~deviceOn);
                     
                     
-                    if any(strcmp(uD.phase(includeIndex)),'A')
+                    if any(strcmp(uD.phase(keepIdx),'A'))
                         warning('You included devices from phase A that were ignored here');
                     end
                     
@@ -418,6 +415,207 @@ classdef energyDataSetClass < prtDataSetClass
                     
         end
         
+        
+        %% Extract features based on the input times
+        % eventTimes must be an eventTimes object to make life easier
+        function energyFeats = extractEventData(obj,eventTimes,varargin)
+            %% Deal with varargin
+            options.windowInS = 61;% take data from 1 minute on each side
+%             options.secondIncrement = 1;% adjust the resolution of the
+%             features, e.g. take data at 1:1:60 or 1:8:60
+
+            % default to extract features from the aggregate load
+            options.devices = 1;
+            % Allow on, off, or both to be extracted
+            options.featureType = 'both';
+            % allow the class to be specified
+            options.classNumber = 1;% as
+            % allow the class name to be provided
+            options.className = {''};
+            % subtract out the minimum from each feature such that
+            % everything starts at the baseline
+            options.zeroFeatures = true;
+            
+            parsedOut = prtUtilSimpleInputParser(options,varargin);
+            
+            windowInS = parsedOut.windowInS;
+            devices = parsedOut.devices;
+            classNumber = parsedOut.classNumber;
+            featureType = parsedOut.featureType;
+            className = parsedOut.className;
+            zeroFeatures = parsedOut.zeroFeatures;
+            
+            %% Only keep the with proper measurements.
+            if isfield(obj.observationInfo,'keepLogicals')
+                kL = [obj.observationInfo.keepLogicals]';
+            else
+                kL = ones(obj.nObservations,1);
+            end
+            
+            xT = obj.getTimesFromUTC('timeScale','days');
+            yT = obj.getTimesFromUTC('timeScale','days','zeroTimes',false);
+            
+            tRes = xT(2);
+            
+            obsPerDay = round(1/tRes);
+            
+            %% How many features should there be per observation?
+            obsPerHalf = round(windowInS/(tRes*86400));
+            
+            %% Round everything to the nearest unit of time.
+            yT = round(yT*obsPerDay)/obsPerDay;
+            
+            eventTimes.onEventsTimes = round(eventTimes.onEventsTimes*obsPerDay)/obsPerDay;
+            
+            eventTimes.offEventsTimes = round(eventTimes.offEventsTimes*obsPerDay)/obsPerDay;
+            
+            energyFeats = repmat(energyFeatureClass,numel(devices),1);
+            
+            %% Extract features from each event
+            for dInc = 1:numel(devices)
+%                 currentDevice = devices(dInc);
+%                 
+                %% Go through the different devices and create a new energyFeatureClass for each
+                currentFeats = energyFeatureClass;
+                
+                %% Set up the observation info.
+                if strcmp(featureType,'both')
+                    timestamp = cat(1,eventTimes.onEventsTimes,...
+                        eventTimes.offEventsTimes);
+                    
+                    eventType = cat(1,ones(numel(eventTimes.onEventsTimes),1),...
+                        zeros(numel(eventTimes.offEventsTimes),1));
+                    
+                    removeIdx = [];
+                    
+                    featureMat = [];
+                    
+                    for eventInc = 1:numel(eventTimes.onEventsTimes)
+                        %% Find the event index
+                        [~,eventIdx] = intersect(yT,eventTimes.onEventsTimes(eventInc));
+                        
+                        %% Make the data vector.
+                        featureIdx = eventIdx - obsPerHalf:eventIdx + obsPerHalf;
+                        
+                        if ~any(featureIdx<1)&&~any(featureIdx>obj.nObservations) && all(kL(featureIdx) == 1)
+                            featureVector = obj.data(featureIdx,dInc)';
+                            
+                            if zeroFeatures
+                                featureVector = featureVector - min(featureVector);
+                            end
+                            
+                            featureMat = cat(1,featureMat,featureVector);
+                        else
+                            removeIdx = cat(1,removeIdx,eventInc);
+                        end
+                    end
+                    
+                    nOn = numel(eventTimes.onEventsTimes);
+                    
+                    for eventInc = 1:numel(eventTimes.offEventsTimes)
+                        %% Find the event index
+                        [~,eventIdx] = intersect(yT,eventTimes.offEventsTimes(eventInc));
+                        
+                        %% Make the data vector.
+                        featureIdx = eventIdx - obsPerHalf:eventIdx + obsPerHalf;
+                        
+                        if ~any(featureIdx<1)||~any(featureIdx>obj.nObservations)
+                            featureVector = obj.data(featureIdx,dInc)';
+                            
+                            if zeroFeatures
+                                featureVector = featureVector - min(featureVector);
+                            end
+                            
+                            featureMat = cat(1,featureMat,featureVector);
+                        else
+                            removeIdx = cat(1,removeIdx,eventInc+nOn);
+                        end
+                    end
+                    
+                elseif strcmp(featureType,'on')
+                    timestamp = eventTimes.onEventsTimes;
+                    
+                    eventType = ones(numel(eventTimes.onEventsTimes),1);
+                    
+                    removeIdx = [];
+                    
+                    featureMat = [];
+                    
+                    for eventInc = 1:numel(eventTimes.onEventsTimes)
+                        %% Find the event index
+                        [~,eventIdx] = intersect(yT,eventTimes.onEventsTimes(eventInc));
+                        
+                        %% Make the data vector.
+                        featureIdx = eventIdx - obsPerHalf:eventIdx + obsPerHalf;
+                        
+                        if ~any(featureIdx<1)&&~any(featureIdx>obj.nObservations) && all(kL(featureIdx) == 1)
+                            featureVector = obj.data(featureIdx,dInc)';
+                            
+                            if zeroFeatures
+                                featureVector = featureVector - min(featureVector);
+                            end
+                            
+                            featureMat = cat(1,featureMat,featureVector);
+                        else
+                            removeIdx = cat(1,removeIdx,eventInc);
+                        end
+                    end
+                    
+                    
+                    
+                elseif strcmp(featureType,'off')
+                    timestamp = eventTimes.offEventsTimes;
+                    
+                    eventType = ones(numel(eventTimes.offEventsTimes),1);
+                    
+                    removeIdx = [];
+                    
+                    featureMat = [];
+                    
+                    for eventInc = 1:numel(eventTimes.offEventsTimes)
+                        %% Find the event index
+                        [~,eventIdx] = intersect(yT,eventTimes.offEventsTimes(eventInc));
+                        
+                        %% Make the data vector.
+                        featureIdx = eventIdx - obsPerHalf:eventIdx + obsPerHalf;
+                        
+                        if ~any(featureIdx<1)&&~any(featureIdx>obj.nObservations) && all(kL(featureIdx) == 1)
+                            featureVector = obj.data(featureIdx,dInc)';
+                            
+                            if zeroFeatures
+                                featureVector = featureVector - min(featureVector);
+                            end
+                            
+                            featureMat = cat(1,featureMat,featureVector);
+                        else
+                            removeIdx = cat(1,removeIdx,eventInc);
+                        end
+                    end
+                    
+                else
+                    error('Please choose on, off, or both for the eventType\n')
+                end
+                
+                currentFeats.data = featureMat;
+                timestamp(removeIdx) = [];
+                eventType(removeIdx) = [];
+                
+                timestamp = num2cell(timestamp);
+                eventType = num2cell(eventType);
+                
+                obsInfo = struct('timestamp',timestamp,'eventType',eventType);
+                
+                currentFeats.observationInfo = obsInfo;
+                
+                currentFeats.targets = classNumber*ones(currentFeats.nObservations,1);
+                
+                currentFeats.classNames = className;
+                
+                energyFeats(dInc) = currentFeats;
+                
+            end
+            
+        end
     end
     
     

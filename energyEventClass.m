@@ -24,6 +24,10 @@ classdef energyEventClass
    end
    
    methods
-       
+       %% Constructor for class instantiation.
+        function obj = energyEventClass(varargin)
+            obj = prtUtilAssignStringValuePairs(obj,varargin{:});
+        end
+        
    end
 end
