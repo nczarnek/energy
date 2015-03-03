@@ -720,8 +720,74 @@ classdef energyDataSetClass < prtDataSetClass
         
         %% Assign power to specific devices based on the current 
         function assignedPower = assignPower(obj,eventTimes,averagePower,varargin)
-            % eventTimes - single energyEventClass object
-            % averagePower - output from findAveragePower
+            % eventTimes -  energyEventClass object or array of objects
+            % averagePower - output structure or structure array from findAveragePower
+            
+            %% Work with varargin.
+            options.useOff = false;
+            parsedOut = prtUtilSimpleInputParser(options,varargin);
+            useOff = parsedOut.useOff;
+            
+            %% Establish the new dataset, assignedPower
+            assignedPower = obj;
+            
+            assignedPower.data = zeros(obj.nObservations,obj.nFeatures);
+            
+            pecanClasses = [obj.featureInfo.pecanClass]';
+            
+            %% Get the times
+            xT = obj.getTimesFromUTC('timeScale','s');
+            yT = obj.getTimesFromUTC('timeScale','days','zeroTimes',false);
+            
+            %% Go through the eventTimes array to figure out which devices 
+            % to assign power to
+            for dInc = 1:numel(eventTimes)
+                %% Find the corresponding feature vector.
+                fIdx = pecanClasses == eventTimes(dInc).classNumber;
+                
+                aPIdx = false(numel(averagePower),1);
+                
+                %% Find the averagePower structure corresponding to the current class
+                for aInc = 1:numel(averagePower)
+                    if averagePower(aInc).classNumber == eventTimes(dInc).classNumber
+                        aPIdx(aInc) = true;
+                    end
+                end
+                
+                if ~useOff
+                    %% Make assignments based on the eventTimes
+                    for eInc = 1:numel(eventTimes(dInc).onEventsTimes)
+                        %% Work with the proper indices
+                        startIdx = find(yT>=eventTimes(dInc).onEventsTimes(eInc),1,'first');
+                        
+                        startXT = xT(startIdx);
+                        endXT = startXT + averagePower(aPIdx).averageTimeInS;
+                        
+                        focusIdx = xT>=startXT & xT<=endXT;
+                        
+                        %% Assign power to the current indices.
+                        assignedPower.data(focusIdx,fIdx) = averagePower(aPIdx).averagePower;
+                        
+                        
+                    end
+                else
+                    %% Make assignments based both on the on and off times.
+                    for eInc = 1:numel(eventTimes(dInc).onEventsTimes)
+                        %% Work with the proper indices
+                        % Find the next off.
+                        nextOffIdx = find(eventTimes(dInc).offEventsTimes>=eventTimes(dInc).onEventsTimes(eInc),1,'first');
+                        
+                        if ~isempty(nextOffIdx)
+                            focusIdx = yT>=eventTimes(dInc).onEventsTimes(eInc) &...
+                                yT<=eventTimes(dInc).offEventsTimes(nextOffIdx);
+                            
+                            assignedPower.data(focusIdx,fIdx) = averagePower(aPIdx).averagePower;
+                        end
+                        
+                        
+                    end
+                end
+            end
             
         end
     end
