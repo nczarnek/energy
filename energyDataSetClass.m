@@ -616,6 +616,114 @@ classdef energyDataSetClass < prtDataSetClass
             end
             
         end
+        
+        
+        %% Determine the average power consumed based on events
+        function powerOut = findAveragePower(obj,eventTimes,varargin)
+            %% Handle varargin
+            options.features = [obj.featureInfo(2:end).pecanClass]';
+            options.fromAggregate = true;
+            options.zeroPower = true;
+            parsedOut = prtUtilSimpleInputParser(options,varargin);
+            features = parsedOut.features;
+            fromAggregate = parsedOut.fromAggregate;
+            zeroPower = parsedOut.zeroPower;
+            
+            pecanClasses = [obj.featureInfo.pecanClass]';
+            
+            %% Get the time in seconds.
+            xT = obj.getTimesFromUTC('timeScale','s');
+            yT = obj.getTimesFromUTC('timeScale','days','zeroTimes',false);
+            
+            %% Assume that we're extracting from the aggregate load
+            extractionFeature = pecanClasses(1);
+            
+            powerOut = repmat(struct('averagePower',[],'averageTimeInS',[],...
+                'classNumber',[],'fromAggregate',[],'numberInstances',[]),numel(features),1);
+            
+            %% Go through the events.
+            for dInc = 1:numel(features)
+                currentFeature = features(dInc);
+                
+                fIdx = pecanClasses == currentFeature;
+                
+                eIdx = false(numel(eventTimes),1);
+                
+                %% Find the eventTimes structure that corresponds to the current device.
+                for eInc = 1:numel(eventTimes)
+                    if (eventTimes(eInc).classNumber == currentFeature)
+                        eIdx(eInc) = true;
+                    end
+                end
+                
+                eventIndex = find(eIdx);
+                
+                if ~isempty(eventIndex)
+                    
+                    if numel(eventIndex)>1
+                        error('You have multiple devices with the same class')
+                    end
+                    
+                    if ~fromAggregate
+                        %% Find the matching datastream in the energyDataSet
+                        extractionFeature = find(pecanClasses == currentFeature);
+                    end
+                    
+                    energyUsed = zeros(numel(eventTimes(eventIndex).onEventsTimes),1);
+                    onTime = zeros(numel(eventTimes(eventIndex).onEventsTimes),1);
+                    
+                    %% Go through all of the on events, find the energy used
+                    % and the time taken.
+                    for eInc = 1:numel(eventTimes(eventIndex).onEventsTimes)
+                        %% Find the next off time that is larger than the current time.
+                        currentOn = eventTimes(eventIndex).onEventsTimes(eInc);
+                        
+                        offIdx = find(eventTimes(eventIndex).offEventsTimes>currentOn,1,'first');
+                        
+                        if ~isempty(offIdx)
+                            currentOff = eventTimes(eventIndex).offEventsTimes(offIdx);
+                            
+                            focusIndices = yT>=currentOn & yT<=currentOff;
+                            
+                            startInS = xT(find(focusIndices,1,'first'));
+                            endInS = xT(find(focusIndices,1,'last'));
+                            
+                            powerSignature = obj.data(focusIndices,extractionFeature);
+                            
+                            if zeroPower
+                                powerSignature = powerSignature - min(powerSignature);
+                            end
+                            
+                            energyUsed(eInc) = trapz(xT(focusIndices),powerSignature);
+                            
+                            onTime(eInc)= endInS - startInS + 1;
+                        end
+                        
+                    end
+                    
+                    %% Remove the times that were not covered.
+                    zeroTimes = find(energyUsed == 0);
+                    
+                    energyUsed(zeroTimes) = [];
+                    onTime(zeroTimes) = [];
+                    
+                    %% Find the average power for the current device.
+                    powerOut(dInc).averagePower = sum(energyUsed)/sum(onTime);
+                    powerOut(dInc).averageTimeInS = mean(onTime);
+                    powerOut(dInc).classNumber = currentFeature;
+                    powerOut(dInc).fromAggregate = fromAggregate;
+                    powerOut(dInc).className = obj.getFeatureNames(fIdx);
+                    powerOut(dInc).numberInstances = numel(energyUsed);
+                end
+            end
+        end
+        
+        %% Assign power to specific devices based on the current 
+        function assignedPower = assignPower(obj,eventTimes,averagePower,varargin)
+            % eventTimes - single energyEventClass object
+            % averagePower - output from findAveragePower
+            
+        end
     end
     
     
