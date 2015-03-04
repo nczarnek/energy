@@ -890,7 +890,7 @@ classdef energyDataSetClass < prtDataSetClass
         
         
         %% Run the entire supervised disaggregation system 
-        function runSupervisedSystem(obj,eventTimes,varargin)
+        function [assignedPowerPerformance] = runSupervisedSystem(obj,eventTimes,varargin)
             options.nXFolds = 5;
             options.detectionHalfWinInS = 61;
             options.eventHaloInS = 61;
@@ -912,6 +912,11 @@ classdef energyDataSetClass < prtDataSetClass
             
             xT = obj.getTimesFromUTC('timeScale','days','zeroTimes',false);
             
+            %% Set up the aggregate energyEventClass
+            detectedTestingEvents = energyEventClass;
+            assignedEventsTotal = repmat(energyEventClass,numel(eventTimes),1);
+            
+
             %% Run through each fold separately.
             for fInc = 1:nXFolds
                 testIdx = false(obj.nObservations,1);
@@ -947,8 +952,6 @@ classdef energyDataSetClass < prtDataSetClass
                 %% Combine the energy events from all classes into one for the aggregate
                 eventTimes(1) = combineEnergyEvents(eventTimes,'devices',2:numel(eventTimes));
                 
-                %% Set up the aggregate energyEventClass
-                detectedTestingEvents = energyEventClass;
                 
                 %% Score the event detector based on the eventTimes
                 trainingTimes = eventTimes;
@@ -1013,11 +1016,13 @@ classdef energyDataSetClass < prtDataSetClass
                 %% Extract features for the classifier.
                 energyFeatures = energyFeatureClass;
                 for tInc = 2:numel(trainingTimes)
-                    currentFeatures = obj.extractEventData(trainingTimes(tInc),'className',...
-                        trainingTimes(tInc).className,'classNumber',...
-                        trainingTimes(tInc).classNumber,'featureType','on');
-                    
-                    energyFeatures = catObservations(energyFeatures,currentFeatures);
+                    if ~isempty(trainingTimes(tInc).onEventsTimes)
+                        currentFeatures = obj.extractEventData(trainingTimes(tInc),'className',...
+                            trainingTimes(tInc).className,'classNumber',...
+                            trainingTimes(tInc).classNumber,'featureType','on');
+                        
+                        energyFeatures = catObservations(energyFeatures,currentFeatures);
+                    end
                 end
                 
                 %% Train the classifier.
@@ -1052,7 +1057,7 @@ classdef energyDataSetClass < prtDataSetClass
                     testingDetectedEvents.offEventsTimes);
                 
                 %% Extract features from the current detected events.
-                detectedEnergyFeatures = obj.extractEventData(detectedTestingEvents,...
+                detectedEnergyFeatures = obj.extractEventData(testingDetectedEvents,...
                     'featureType','on');
                 
                 if usePca
@@ -1069,15 +1074,52 @@ classdef energyDataSetClass < prtDataSetClass
                 % DIFFERENT CLASSES!!!!  THIS CURRENTLY REQUIRES THE SAME
                 % NUMBER OF EVENTTIMES AS FEATURES, AND IT WOULD BE NICE
                 % FOR THIS TO BE AGNOSTIC!!!
+                assignedEvents = repmat(energyEventClass,numel(eventTimes),1);
+                for eventInc = 1:testingClassOuts.nObservations
+                    currentClass = testingClassOuts.data(eventInc);
+                    
+                    assignedEvents(currentClass).onEventsTimes = ...
+                        cat(1,assignedEvents(currentClass).onEventsTimes,...
+                        testingClassOuts.observationInfo(eventInc).timestamp);
+                end
                 
-                
+                %% Add on to the aggregate events
+                for typeInc = 1:numel(eventTimes)
+                    assignedEvents(typeInc).classNumber = typeInc;
+                    
+                    if ~isempty(assignedEvents(typeInc).onEventsTimes)
+                        assignedEventsTotal(typeInc).onEventsTimes = ...
+                            cat(1,assignedEventsTotal(typeInc).onEventsTimes,....
+                            assignedEvents(typeInc).onEventsTimes);
+                    end
+                end
                 
                 
             end
             
+            %% THIS SHOULD BE CHANGED SO THAT THE AVERAGE ACCOUNTS FOR ALL 
+            % FOLDS, NOT JUST THE LAST FOLD.
+            averagePowers = trainData.findAveragePower(trainingTimes(2:end));
             
             
+            %% Now, we have the aggregated event times and the average power
+            % details, so we can find both the device ROCs and the energy 
+            % assignment metrics.
             
+            for typeInc = 1:numel(eventTimes)
+                assignedEventsTotal(typeInc).classNumber = typeInc;
+            end
+            
+            %% Assign power to each device
+            newData = obj.assignPower(assignedEventsTotal,averagePowers);
+            
+            
+            %% Evaluate the assignment performance.
+            assignedPowerPerformance = obj.calculateAssignmentErrors(newData);
+            
+            %% Evaluate the detection performance of the aggregated events.
+%             detectionPerformance = scoreEventDetectionQuickly(detectedTestingEvents,...
+%                 eventTimes(1),eventHaloInS);
         end
     end
     
