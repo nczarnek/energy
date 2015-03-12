@@ -16,9 +16,11 @@ classdef energyEventClass
        offEvents;
        offEventsIndex;
        offEventsTimes;
+       offClass;
        onEvents;
        onEventsIndex;
        onEventsTimes;
+       onClass;
        house;
        houseNumber;
    end

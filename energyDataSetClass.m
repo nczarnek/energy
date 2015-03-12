@@ -971,8 +971,10 @@ classdef energyDataSetClass < prtDataSetClass
             % Should the true event times be used for the classification
             % step?
             options.useTrueTimes = false;
+            % Should the true classes be used for the assignment step?
+            options.useTrueClasses = false;
             % Do you only want to focus on detection?
-            options.onlyRunDetection = false;
+%             options.onlyRunDetection = false;
             % Do you want to zmuv the components?
             options.zmuvFeatures = true;
             % What classifier do you want?
@@ -995,12 +997,13 @@ classdef energyDataSetClass < prtDataSetClass
             usePca = parsedOuts.usePca;
             nPcaComponents = parsedOuts.nPcaComponents;
             useTrueTimes = parsedOuts.useTrueTimes;
-            onlyRunDetection = parsedOuts.onlyRunDetection;
+%             onlyRunDetection = parsedOuts.onlyRunDetection;
             zmuvFeatures = parsedOuts.zmuvFeatures;
             classifier = parsedOuts.classifier;
             k = parsedOuts.k;
             nTrees = parsedOuts.nTrees;
-            useRbf = parsedOuts.svmRbf;
+            useRbf = parsedOuts.useRbf;
+            useTrueClasses = parsedOuts.useTrueClasses;
             
             %% Split up the data evenly into the number of folds
             nObsPerFold = round(obj.nObservations/nXFolds);
@@ -1156,8 +1159,9 @@ classdef energyDataSetClass < prtDataSetClass
                 
                 classifier = classifier.train(inputFeats);
                 
-                %% Detect events in the testing data.
+                %%
                 if ~useTrueTimes
+                    %% Detect events in the testing data.
                     testingDetectedEvents = detectEnergyEvents(testData,...
                         'halfWindowInS',detectionHalfWinInS,'device',1,'threshold',...
                         onEventThreshold);
@@ -1183,6 +1187,13 @@ classdef energyDataSetClass < prtDataSetClass
                 detectedTestingEvents.offEventsTimes = cat(1,...
                     detectedTestingEvents.offEventsTimes,...
                     testingDetectedEvents.offEventsTimes);
+                detectedTestingEvents.timeStamps = cat(1,....
+                    detectedTestingEvents.timeStamps,...
+                    testingDetectedEvents.timeStamps);
+                detectedTestingEvents.confidences = cat(1,...
+                    detectedTestingEvents.confidences,...
+                    testingDetectedEvents.confidences);
+                
                 
                 %% Extract features from the current detected events.
                 detectedEnergyFeatures = obj.extractEventData(testingDetectedEvents,...
