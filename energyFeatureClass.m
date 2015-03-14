@@ -43,7 +43,7 @@ classdef energyFeatureClass < prtDataSetClass
         
         %% Visualize the pca components of the features
         function [pcaOuts,pca] = getPca(obj,varargin)
-            options.nComponents = 3;
+            options.nComponents = 10;
             options.classes = [];
             options.onlyOn = 0;
             options.onlyOff = 0;

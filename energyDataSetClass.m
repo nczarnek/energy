@@ -263,8 +263,13 @@ classdef energyDataSetClass < prtDataSetClass
                     plot(yT(offIdx),obj.data(offIdx,focusDevice),[pOffColors(eInc),'x'])
                     
                     if ~strcmp(eventTimes(eInc).className,'')
-                        legendStr = cat(2,legendStr,[eventTimes(eInc).className{1},' on events'],....
-                            [eventTimes(eInc).className{1},' off events']);
+                        try
+                            legendStr = cat(2,legendStr,[eventTimes(eInc).className{1},' on events'],....
+                                [eventTimes(eInc).className{1},' off events']);
+                        catch
+                            legendStr = cat(2,legendStr,[eventTimes(eInc).className,' on events'],....
+                                [eventTimes(eInc).className,' off events']);
+                        end
                     else
                         legendStr = cat(2,legendStr,['Device ',num2str(eInc),' on events'],....
                             ['Device ',num2str(eInc),' off events']);
@@ -692,7 +697,7 @@ classdef energyDataSetClass < prtDataSetClass
             yT = obj.getTimesFromUTC('timeScale','days','zeroTimes',false);
             
             %% Assume that we're extracting from the aggregate load
-            extractionFeature = pecanClasses(1);
+            extractionFeature = 1;
             
             powerOut = repmat(struct('averagePower',[],'averageTimeInS',[],...
                 'classNumber',[],'fromAggregate',[],'numberInstances',[]),numel(features),1);
@@ -822,48 +827,52 @@ classdef energyDataSetClass < prtDataSetClass
             % to assign power to
             for dInc = 1:numel(eventTimes)
                 %% Find the corresponding feature vector.
-                fIdx = pecanClasses == eventTimes(dInc).classNumber;
-                
-                aPIdx = false(numel(averagePower),1);
-                
-                %% Find the averagePower structure corresponding to the current class
-                for aInc = 1:numel(averagePower)
-                    if averagePower(aInc).classNumber == eventTimes(dInc).classNumber
-                        aPIdx(aInc) = true;
-                    end
-                end
-                
-                if ~useOff
-                    %% Make assignments based on the eventTimes
-                    for eInc = 1:numel(eventTimes(dInc).onEventsTimes)
-                        %% Work with the proper indices
-                        startIdx = find(yT>=eventTimes(dInc).onEventsTimes(eInc),1,'first');
-                        
-                        startXT = xT(startIdx);
-                        endXT = startXT + averagePower(aPIdx).averageTimeInS;
-                        
-                        focusIdx = xT>=startXT & xT<=endXT;
-                        
-                        %% Assign power to the current indices.
-                        assignedPower.data(focusIdx,fIdx) = averagePower(aPIdx).averagePower;
-                        
-                        
-                    end
-                else
-                    %% Make assignments based both on the on and off times.
-                    for eInc = 1:numel(eventTimes(dInc).onEventsTimes)
-                        %% Work with the proper indices
-                        % Find the next off.
-                        nextOffIdx = find(eventTimes(dInc).offEventsTimes>=eventTimes(dInc).onEventsTimes(eInc),1,'first');
-                        
-                        if ~isempty(nextOffIdx)
-                            focusIdx = yT>=eventTimes(dInc).onEventsTimes(eInc) &...
-                                yT<=eventTimes(dInc).offEventsTimes(nextOffIdx);
-                            
-                            assignedPower.data(focusIdx,fIdx) = averagePower(aPIdx).averagePower;
+                if ~isempty(eventTimes(dInc).classNumber)
+                    fIdx = pecanClasses == eventTimes(dInc).classNumber;
+                    
+                    aPIdx = false(numel(averagePower),1);
+                    
+                    %% Find the averagePower structure corresponding to the current class
+                    for aInc = 1:numel(averagePower)
+                        if averagePower(aInc).classNumber == eventTimes(dInc).classNumber
+                            aPIdx(aInc) = true;
                         end
+                    end
+                    
+                    if ~useOff
+                        %% Make assignments based on the eventTimes
+                        % First get the focusIdx, then make the assignments.
+                        tS2 = tic;%
+                        focusIdx = false(assignedPower.nObservations,1);
+                        for eInc = 1:numel(eventTimes(dInc).onEventsTimes)
+                            startIdx = find(yT>=eventTimes(dInc).onEventsTimes(eInc),1,'first');
+                            
+                            startXT = xT(startIdx);
+                            endXT = startXT + averagePower(aPIdx).averageTimeInS;
+                            
+                            focusIdx(xT>=startXT&xT<=endXT) = true;
+                            
+                        end
+                        assignedPower.data(focusIdx,fIdx) = averagePower(aPIdx).averagePower;
+                        tStop2 = toc(tS2);% 2 s
                         
                         
+                    else
+                        %% Make assignments based both on the on and off times.
+                        for eInc = 1:numel(eventTimes(dInc).onEventsTimes)
+                            %% Work with the proper indices
+                            % Find the next off.
+                            nextOffIdx = find(eventTimes(dInc).offEventsTimes>=eventTimes(dInc).onEventsTimes(eInc),1,'first');
+                            
+                            if ~isempty(nextOffIdx)
+                                focusIdx = yT>=eventTimes(dInc).onEventsTimes(eInc) &...
+                                    yT<=eventTimes(dInc).offEventsTimes(nextOffIdx);
+                                
+                                assignedPower.data(focusIdx,fIdx) = averagePower(aPIdx).averagePower;
+                            end
+                            
+                            
+                        end
                     end
                 end
             end
@@ -977,7 +986,7 @@ classdef energyDataSetClass < prtDataSetClass
 %             options.onlyRunDetection = false;
             % Do you want to zmuv the components?
             options.zmuvFeatures = true;
-            % What classifier do you want?
+            % What classifier do you want? Default is knn with k = 5
             options.classifier = 'knn';
             % If KNN, what is k?
             options.k = 5;
@@ -1080,9 +1089,11 @@ classdef energyDataSetClass < prtDataSetClass
                     
                     trainingTimes(tInc).offEventsIndex = trainingTimes(tInc).offEventsIndex(keepOff);
                     trainingTimes(tInc).offEventsTimes = trainingTimes(tInc).offEventsTimes(keepOff);
+                    trainingTimes(tInc).offClass = trainingTimes(tInc).offClass(keepOff);
                     
                     trainingTimes(tInc).onEventsIndex = trainingTimes(tInc).onEventsIndex(keepOn);
                     trainingTimes(tInc).onEventsTimes = trainingTimes(tInc).onEventsTimes(keepOn);
+                    trainingTimes(tInc).onClass = trainingTimes(tInc).onClass(keepOn);
                     
                     %% Testing times
                     % onEvents and offEvents are not always established since they
@@ -1096,9 +1107,11 @@ classdef energyDataSetClass < prtDataSetClass
                     
                     testingTimes(tInc).onEventsIndex = testingTimes(tInc).onEventsIndex(~keepOn);
                     testingTimes(tInc).onEventsTimes = testingTimes(tInc).onEventsTimes(~keepOn);
+                    testingTimes(tInc).onClass = testingTimes(tInc).onClass(~keepOn);
                     
                     testingTimes(tInc).offEventsIndex = testingTimes(tInc).offEventsIndex(~keepOff);
                     testingTimes(tInc).offEventsTimes = testingTimes(tInc).offEventsTimes(~keepOff);
+                    testingTimes(tInc).offClass = testingTimes(tInc).offClass(~keepOff);
                 end
                 
                 
@@ -1132,15 +1145,15 @@ classdef energyDataSetClass < prtDataSetClass
                 %% Train the classifier.
                 switch lower(classifier)
                     case 'knn'
-                        classifier = prtClassKnn('k',k) + prtDecisionMap;
+                        prtClassifier = prtClassKnn('k',k) + prtDecisionMap;
                     case 'svm'
                         if useRbf
-                            classifier = prtClassLibSvm + prtDecisionMap;
+                            prtClassifier = prtClassLibSvm + prtDecisionMap;
                         else
-                            classifier = prtClassLibSvm('kernel',0) + prtDecisionMap;
+                            prtClassifier = prtClassLibSvm('kernel',0) + prtDecisionMap;
                         end
                     case 'rf'
-                        classifier = prtClassTreeBaggingCap('nTrees',nTrees) + prtDecisionMap;
+                        prtClassifier = prtClassTreeBaggingCap('nTrees',nTrees) + prtDecisionMap;
                 end
                 
                 %% Modify the features based on input options to take the 
@@ -1157,7 +1170,7 @@ classdef energyDataSetClass < prtDataSetClass
                     end
                 end
                 
-                classifier = classifier.train(inputFeats);
+                prtClassifier = prtClassifier.train(inputFeats);
                 
                 %%
                 if ~useTrueTimes
@@ -1193,6 +1206,12 @@ classdef energyDataSetClass < prtDataSetClass
                 detectedTestingEvents.confidences = cat(1,...
                     detectedTestingEvents.confidences,...
                     testingDetectedEvents.confidences);
+                detectedTestingEvents.onClass = cat(1,...
+                    detectedTestingEvents.onClass,...
+                    testingDetectedEvents.onClass);
+                detectedTestingEvents.offClass = cat(1,...
+                    detectedTestingEvents.offClass,...
+                    testingDetectedEvents.offClass);
                 
                 
                 %% Extract features from the current detected events.
@@ -1206,19 +1225,30 @@ classdef energyDataSetClass < prtDataSetClass
                 end
                 
                 %% Run the classifier.
-                testingClassOuts = classifier.run(detectedEnergyPca);
+                testingClassOuts = prtClassifier.run(detectedEnergyPca);
                 
                 %% Make the assignments.
-                % THIS NEEDS TO BE CHANGED IN THE FUTURE TO ACCOUNT FOR
-                % DIFFERENT CLASSES!!!!  THIS CURRENTLY REQUIRES THE SAME
-                % NUMBER OF EVENTTIMES AS FEATURES, AND IT WOULD BE NICE
-                % FOR THIS TO BE AGNOSTIC!!!
-                assignedEvents = repmat(energyEventClass,numel(eventTimes),1);
+%                 % THIS NEEDS TO BE CHANGED IN THE FUTURE TO ACCOUNT FOR
+%                 % DIFFERENT CLASSES!!!!  THIS CURRENTLY REQUIRES THE SAME
+%                 % NUMBER OF EVENTTIMES AS FEATURES, AND IT WOULD BE NICE
+%                 % FOR THIS TO BE AGNOSTIC!!! -- FIXED
+                possibleClasses = inputFeats.uniqueClasses;
+                assignedEvents = repmat(energyEventClass,numel(possibleClasses),1);
+                
+                for eInc = 1:numel(possibleClasses)
+                    assignedEvents(eInc).classNumber = possibleClasses(eInc);
+                    assignedEvents(eInc).className = inputFeats.getClassNames(eInc);
+                    assignedEvents(eInc).house = eventTimes(1).house;
+                    assignedEvents(eInc).houseNumber = eventTimes(1).houseNumber;
+                end
+                
                 for eventInc = 1:testingClassOuts.nObservations
                     currentClass = testingClassOuts.data(eventInc);
                     
-                    assignedEvents(currentClass).onEventsTimes = ...
-                        cat(1,assignedEvents(currentClass).onEventsTimes,...
+                    %% Find the corresponding class
+                    currentLogicals = possibleClasses == currentClass;
+                    assignedEvents(currentLogicals).onEventsTimes = ...
+                        cat(1,assignedEvents(currentLogicals).onEventsTimes,...
                         testingClassOuts.observationInfo(eventInc).timestamp);
                 end
                 
@@ -1246,7 +1276,7 @@ classdef energyDataSetClass < prtDataSetClass
             % assignment metrics.
             
             for typeInc = 1:numel(eventTimes)
-                assignedEventsTotal(typeInc).classNumber = typeInc;
+                assignedEventsTotal(typeInc).classNumber = eventTimes(typeInc).classNumber;
             end
             
             %% Assign power to each device
