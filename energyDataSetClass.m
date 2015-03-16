@@ -771,8 +771,6 @@ classdef energyDataSetClass < prtDataSetClass
                     numInstances = numel(energyUsed);
                     
                     if numInstances ~= 0
-                        newIdx = 1:numel(energyUsed);
-                        
                         %% Handle outliers
                         if removeTails
                             [energyUsed,newIdx] = sort(energyUsed);
@@ -842,7 +840,7 @@ classdef energyDataSetClass < prtDataSetClass
                     if ~useOff
                         %% Make assignments based on the eventTimes
                         % First get the focusIdx, then make the assignments.
-                        tS2 = tic;%
+%                         tS2 = tic;%
                         focusIdx = false(assignedPower.nObservations,1);
                         for eInc = 1:numel(eventTimes(dInc).onEventsTimes)
                             startIdx = find(yT>=eventTimes(dInc).onEventsTimes(eInc),1,'first');
@@ -854,7 +852,7 @@ classdef energyDataSetClass < prtDataSetClass
                             
                         end
                         assignedPower.data(focusIdx,fIdx) = averagePower(aPIdx).averagePower;
-                        tStop2 = toc(tS2);% 2 s
+%                         tStop2 = toc(tS2);% 2 s
                         
                         
                     else
@@ -961,7 +959,11 @@ classdef energyDataSetClass < prtDataSetClass
         
         
         %% Run the entire supervised disaggregation system 
-        function [assignedPowerPerformance] = runSupervisedSystem(obj,eventTimes,varargin)
+        function [systemResults,systemParameters] = runSupervisedSystem(obj,eventTimes,varargin)
+            % Note that this assumes that the aggregate load is sent in as
+            % the first eventTimes array component.
+            
+            %%
             % How many cross val folds do you want for the full
             % disaggregation system?
             options.nXFolds = 5;
@@ -994,9 +996,26 @@ classdef energyDataSetClass < prtDataSetClass
             options.nTrees = 20;
             % If SVM, rbf or linear?
             options.useRbf = true;
+            % Should the power assignments be made from the submetered data or
+            % the aggregate load?
+            options.fromAggregate = true;
+            % Do you want to find the detection performance?
+            options.findDetectionPerformance = false;
+            % Do you want to find the classification performance?
+            options.findClassificationPerformance = true;
+            % Do you want to assign energy to devices?
+            options.findAssignmentPerformance = true;
+            % Should any of the classes be combined into one?
+            options.otherClasses = [];
+            % Should we score both on and off times or just on?
+            options.onlyOn = true;
+            % Allow the features to be saved
+            options.saveFeatureDir = [];
+            % Allow the features to be loaded.
+            options.loadFeatureDir = [];
             
             parsedOuts = prtUtilSimpleInputParser(options,varargin);
-            
+            systemParameters = parsedOuts;
             
             nXFolds = parsedOuts.nXFolds;
             detectionHalfWinInS = parsedOuts.detectionHalfWinInS;
@@ -1013,17 +1032,107 @@ classdef energyDataSetClass < prtDataSetClass
             nTrees = parsedOuts.nTrees;
             useRbf = parsedOuts.useRbf;
             useTrueClasses = parsedOuts.useTrueClasses;
+            fromAggregate = parsedOuts.fromAggregate;
+            findDetectionPerformance = parsedOuts.findDetectionPerformance;
+            findClassificationPerformance = parsedOuts.findClassificationPerformance;
+            otherClasses = parsedOuts.otherClasses;
+            findAssignmentPerformance = parsedOuts.findAssignmentPerformance;
+            onlyOn = parsedOuts.onlyOn;
+            saveFeatureDir = parsedOuts.saveFeatureDir;
+            loadFeatureDir = parsedOuts.loadFeatureDir;
+            
+            %% Before anything else, combine classes.
+            if ~isempty(otherClasses)
+                cIdx = false(numel(eventTimes),1);
+                for dInc = 1:numel(eventTimes)
+                    if ~isempty(eventTimes(dInc).classNumber)
+                        if any(otherClasses == eventTimes(dInc).classNumber)
+                            cIdx(dInc) = true;
+                        end
+                    end
+                end
+                
+                firstDevice = find(cIdx,1,'first');
+                
+                eventTimes(firstDevice) = combineEnergyEvents(eventTimes(cIdx),...
+                    'classNumber',1000);
+                
+                cIdx(firstDevice) = false;
+                eventTimes = eventTimes(~cIdx);
+            end
             
             %% Split up the data evenly into the number of folds
             nObsPerFold = round(obj.nObservations/nXFolds);
-            
+             
             xT = obj.getTimesFromUTC('timeScale','days','zeroTimes',false);
             
             %% Set up the aggregate energyEventClass
             detectedTestingEvents = energyEventClass;
             assignedEventsTotal = repmat(energyEventClass,numel(eventTimes),1);
             
+            %% Extract features for the classifier.
+            allEnergyFeatures = energyFeatureClass;
+            
+            if isempty(loadFeatureDir)
+                for tInc = 2:numel(eventTimes)
+                    if ~isempty(eventTimes(tInc).onEventsTimes)
+                        tStart = tic;
+                        
+                        currentFeatures = obj.extractEventData(eventTimes(tInc),'className',...
+                            eventTimes(tInc).className,'classNumber',...
+                            eventTimes(tInc).classNumber,'featureType','on',...
+                            'windowInS',extractionWindow);
+                        
+                        allEnergyFeatures = catObservations(allEnergyFeatures,currentFeatures);
+                        tStop = toc(tStart);
+                        
+                        try
+                            className = currentFeatures.classNames{1};
+                        catch
+                            className = currentFeatures.classNames;
+                        end
+                        
+                        fprintf(1,[num2str(tStop),'s: ',num2str(currentFeatures.nObservations),' ',className,' features extracted\n'])
+                    end
+                end
+                
+                if ~isempty(saveFeatureDir)
+                    save(fullfile(saveFeatureDir,'allEnergyFeatures.mat'))
+                end
+            else
+                load(fullfile(loadFeatureDir,'allEnergyFeatures.mat'))
+            end
+            featureTimeStamps = [allEnergyFeatures.observationInfo.timestamp]';
 
+            
+            %% Set up the classifier
+            switch lower(classifier)
+                case 'knn'
+                    prtClassifier = prtClassKnn('k',k) + prtDecisionMap;
+                case 'svm'
+                    if useRbf
+                        prtClassifier = prtClassLibSvm + prtDecisionMap;
+                    else
+                        prtClassifier = prtClassLibSvm('kernel',0) + prtDecisionMap;
+                    end
+                case 'rf'
+                    prtClassifier = prtClassTreeBaggingCap('nTrees',nTrees) + prtDecisionMap;
+            end
+            
+            
+            %% Perform 5 fold cross val if desired.
+            if findClassificationPerformance % ~40-50 s for 18k 3 feature observations with knn and k = 5
+                tStart = tic;
+                classificationPerformance = prtClassifier.kfolds(allEnergyFeatures,nXFolds);
+                tStop = toc(tStart);
+                fprintf(1,[num2str(tStop),'s for ',classifier,' ',num2str(nXFolds),'-fold cross val\n'])
+            else
+                classificationPerformance = [];
+            end
+
+            %% Set up the testing feature object to store all of the extracted features.
+            allTestingFeatures = energyFeatureClass;
+            
             %% Run through each fold separately.
             for fInc = 1:nXFolds
                 testIdx = false(obj.nObservations,1);
@@ -1055,7 +1164,6 @@ classdef energyDataSetClass < prtDataSetClass
                 
                 %% Combine the energy events from all classes into one for the aggregate
                 eventTimes(1) = combineEnergyEvents(eventTimes,'devices',2:numel(eventTimes));
-                
                 
                 %% Score the event detector based on the eventTimes
                 trainingTimes = eventTimes;
@@ -1120,41 +1228,35 @@ classdef energyDataSetClass < prtDataSetClass
                     detectedTrainingEvents = detectEnergyEvents(trainData,...
                         'halfWindowInS',detectionHalfWinInS,'device',1);
                     
+                    
+                    tStart = tic;
                     %% Score the performance.
                     trainingEventDetectionPerformance = scoreEventDetectionQuickly(...
-                        detectedTrainingEvents,trainingTimes(1),eventHaloInS);
+                        detectedTrainingEvents,trainingTimes(1),eventHaloInS,'onlyOn',onlyOn);
+                    
+                    tStop = toc(tStart);
+                    fprintf(1,[num2str(tStop),'s for event detection\n'])
+                    
                     
                     onThreshIdx = find(trainingEventDetectionPerformance.onFa>=farThreshold,1,'first');
                     
                     onEventThreshold = trainingEventDetectionPerformance.onThresholds(onThreshIdx);
                 end
                 
-                %% Extract features for the classifier.
-                energyFeatures = energyFeatureClass;
-                for tInc = 2:numel(trainingTimes)
-                    if ~isempty(trainingTimes(tInc).onEventsTimes)
-                        currentFeatures = obj.extractEventData(trainingTimes(tInc),'className',...
-                            trainingTimes(tInc).className,'classNumber',...
-                            trainingTimes(tInc).classNumber,'featureType','on',...
-                            'windowInS',extractionWindow);
-                        
-                        energyFeatures = catObservations(energyFeatures,currentFeatures);
-                    end
+                %% Get the training features.
+                startTime = xT(startIdx);
+                endTime = xT(endIdx);
+                
+                if fInc == 1
+                    energyFeatures = allEnergyFeatures.retainObservations(featureTimeStamps>=endTime);
+                elseif fInc == nXFolds
+                    energyFeatures = allEnergyFeatures.retainObservations(featureTimeStamps<=startTime);
+                else
+                    firstFeatures = allEnergyFeatures.retainObservations(featureTimeStamps<=startTime);
+                    lastFeatures = allEnergyFeatures.retainObservations(featureTimeStamps>=endTime);
+                    energyFeatures = catObservations(firstFeatures,lastFeatures);
                 end
                 
-                %% Train the classifier.
-                switch lower(classifier)
-                    case 'knn'
-                        prtClassifier = prtClassKnn('k',k) + prtDecisionMap;
-                    case 'svm'
-                        if useRbf
-                            prtClassifier = prtClassLibSvm + prtDecisionMap;
-                        else
-                            prtClassifier = prtClassLibSvm('kernel',0) + prtDecisionMap;
-                        end
-                    case 'rf'
-                        prtClassifier = prtClassTreeBaggingCap('nTrees',nTrees) + prtDecisionMap;
-                end
                 
                 %% Modify the features based on input options to take the 
                 % principal components and the zscore
@@ -1172,7 +1274,7 @@ classdef energyDataSetClass < prtDataSetClass
                 
                 prtClassifier = prtClassifier.train(inputFeats);
                 
-                %%
+                %% Are events detected or just based on truth?
                 if ~useTrueTimes
                     %% Detect events in the testing data.
                     testingDetectedEvents = detectEnergyEvents(testData,...
@@ -1215,8 +1317,18 @@ classdef energyDataSetClass < prtDataSetClass
                 
                 
                 %% Extract features from the current detected events.
-                detectedEnergyFeatures = obj.extractEventData(testingDetectedEvents,...
-                    'featureType','on','windowInS',extractionWindow);
+                testingEvents = allEnergyFeatures.retainObservations(featureTimeStamps>=startTime & ...
+                    featureTimeStamps<=endTime);
+                if ~useTrueTimes
+                    detectedEnergyFeatures = obj.extractEventData(testingDetectedEvents,...
+                        'featureType','on','windowInS',extractionWindow);
+                else
+                    detectedEnergyFeatures = testingEvents;
+                end
+                
+                %% Add on to the existing features
+                allTestingFeatures = catObservations(allTestingFeatures,...
+                    detectedEnergyFeatures);
                 
                 if usePca
                     detectedEnergyPca = inputPca.run(detectedEnergyFeatures);
@@ -1228,16 +1340,13 @@ classdef energyDataSetClass < prtDataSetClass
                 testingClassOuts = prtClassifier.run(detectedEnergyPca);
                 
                 %% Make the assignments.
-%                 % THIS NEEDS TO BE CHANGED IN THE FUTURE TO ACCOUNT FOR
-%                 % DIFFERENT CLASSES!!!!  THIS CURRENTLY REQUIRES THE SAME
-%                 % NUMBER OF EVENTTIMES AS FEATURES, AND IT WOULD BE NICE
-%                 % FOR THIS TO BE AGNOSTIC!!! -- FIXED
                 possibleClasses = inputFeats.uniqueClasses;
                 assignedEvents = repmat(energyEventClass,numel(possibleClasses),1);
                 
                 for eInc = 1:numel(possibleClasses)
-                    assignedEvents(eInc).classNumber = possibleClasses(eInc);
-                    assignedEvents(eInc).className = inputFeats.getClassNames(eInc);
+                    cNum = possibleClasses(eInc);
+                    assignedEvents(eInc).classNumber = cNum;
+                    assignedEvents(eInc).className = inputFeats.getClassNames(cNum);
                     assignedEvents(eInc).house = eventTimes(1).house;
                     assignedEvents(eInc).houseNumber = eventTimes(1).houseNumber;
                 end
@@ -1252,43 +1361,77 @@ classdef energyDataSetClass < prtDataSetClass
                         testingClassOuts.observationInfo(eventInc).timestamp);
                 end
                 
+                
                 %% Add on to the aggregate events
-                for typeInc = 1:numel(eventTimes)
-                    assignedEvents(typeInc).classNumber = typeInc;
-                    
-                    if ~isempty(assignedEvents(typeInc).onEventsTimes)
-                        assignedEventsTotal(typeInc).onEventsTimes = ...
-                            cat(1,assignedEventsTotal(typeInc).onEventsTimes,....
+                if ~exist('assignedEventsTotal')% initialize the total events
+                    assignedEventsTotal = assignedEvents;
+                else
+                    for typeInc = 1:numel(assignedEvents)
+                        currentClass = assignedEvents(typeInc).classNumber;
+                        
+                        focusClass = false(numel(assignedEvents),1);
+                        
+                        for fInc = 1:numel(focusClass)
+                            if assignedEvents(typeInc).classNumber == currentClass
+                                focusClass(fInc) = true;
+                            end
+                        end
+                        
+                        assignedEventsTotal(focusClass).onEventsTimes = ...
+                            cat(1,assignedEventsTotal(focusClass).onEventsTimes,...
                             assignedEvents(typeInc).onEventsTimes);
+                            
+                        
                     end
                 end
                 
                 
+                
             end
             
-            %% THIS SHOULD BE CHANGED SO THAT THE AVERAGE ACCOUNTS FOR ALL 
-            % FOLDS, NOT JUST THE LAST FOLD.
-            averagePowers = trainData.findAveragePower(trainingTimes(2:end));
-            
-            
-            %% Now, we have the aggregated event times and the average power
-            % details, so we can find both the device ROCs and the energy 
-            % assignment metrics.
-            
-            for typeInc = 1:numel(eventTimes)
-                assignedEventsTotal(typeInc).classNumber = eventTimes(typeInc).classNumber;
+            if findAssignmentPerformance
+                %% Determine how to assign power.
+                averagePowers = obj.findAveragePower(eventTimes(2:end),...
+                    'fromAggregate',fromAggregate);
+                
+                %% Now, we have the aggregated event times and the average power
+                % details, so we can find both the device ROCs and the energy
+                % assignment metrics.
+                for typeInc = 1:numel(eventTimes)
+                    assignedEventsTotal(typeInc).classNumber = eventTimes(typeInc).classNumber;
+                end
+                
+                %% Assign power to each device
+                if ~useTrueClasses
+                    newData = obj.assignPower(assignedEventsTotal,averagePowers);
+                else
+                    newData = obj.assignPower(eventTimes,averagePowers);
+                end
+                
+                
+                %% Evaluate the assignment performance.
+                assignedPowerPerformance = obj.calculateAssignmentErrors(newData);
+            else
+                assignedPowerPerformance = [];
+                newData = [];
             end
-            
-            %% Assign power to each device
-            newData = obj.assignPower(assignedEventsTotal,averagePowers);
-            
-            
-            %% Evaluate the assignment performance.
-            assignedPowerPerformance = obj.calculateAssignmentErrors(newData);
             
             %% Evaluate the detection performance of the aggregated events.
-%             detectionPerformance = scoreEventDetectionQuickly(detectedTestingEvents,...
-%                 eventTimes(1),eventHaloInS);
+            if findDetectionPerformance
+                detectionPerformance = scoreEventDetectionQuickly(detectedTestingEvents,...
+                    eventTimes(1),eventHaloInS,'onlyOn',onlyOn);
+            else
+                detectionPerformance = scoreEventDetectionQuickly(eventTimes(1),...
+                    eventTimes(1),eventHaloInS,'onlyOn',onlyOn);
+            end
+
+            
+            systemResults.assignedPowerPerformance = assignedPowerPerformance;
+            systemResults.detectionPerformance = detectionPerformance;
+            systemResults.classificationPerformance = classificationPerformance;
+            systemResults.newData = newData;
+            systemResults.allEnergyFeatures = allEnergyFeatures;
+            
         end
     end
     
