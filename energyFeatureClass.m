@@ -42,7 +42,7 @@ classdef energyFeatureClass < prtDataSetClass
         end
         
         %% Visualize the pca components of the features
-        function [pcaOuts,pca] = getPca(obj,varargin)
+        function [pcaOuts,pca,zM] = getPca(obj,varargin)
             options.nComponents = 10;
             options.classes = [];
             options.onlyOn = 0;
@@ -84,6 +84,8 @@ classdef energyFeatureClass < prtDataSetClass
                 zM = prtPreProcZmuv;
                 zM = zM.train(obj);
                 obj = zM.run(obj);
+            else
+                zM = [];
             end
             
             if ~individual

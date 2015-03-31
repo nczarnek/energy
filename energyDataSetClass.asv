@@ -1157,12 +1157,8 @@ classdef energyDataSetClass < prtDataSetClass
                     eventTimes(firstDevice) = combineEnergyEvents(eventTimes(cellIdx),...
                         'classNumber',1000 + cellInc);
                     
-                    try
-                        if ~isempty(combinedClassNames{cellInc})
-                            eventTimes(firstDevice).className = combinedClassNames{cellInc};
-                        end
-                    catch
-                        error('Make sure that names are sent in as cells')
+                    if ~isempty(combinedClassNames{cellInc})
+                        eventTimes(firstDevice).className = combinedClassNames{cellinc};
                     end
                     
                     cellIdx(firstDevice) = false;
@@ -1175,6 +1171,27 @@ classdef energyDataSetClass < prtDataSetClass
             
             eventTimes = eventTimes(~otherAndCombinedIdx);
             
+            
+            
+            %% Before anything else, combine classes.
+            if ~isempty(otherClasses)
+                cIdx = false(numel(eventTimes),1);
+                for dInc = 1:numel(eventTimes)
+                    if ~isempty(eventTimes(dInc).classNumber)
+                        if any(otherClasses == eventTimes(dInc).classNumber)
+                            cIdx(dInc) = true;
+                        end
+                    end
+                end
+                
+                firstDevice = find(cIdx,1,'first');
+                
+                eventTimes(firstDevice) = combineEnergyEvents(eventTimes(cIdx),...
+                    'classNumber',1000);
+                
+                cIdx(firstDevice) = false;
+                eventTimes = eventTimes(~cIdx);
+            end
             
             %% Split up the data evenly into the number of folds
             nObsPerFold = round(obj.nObservations/nXFolds);
