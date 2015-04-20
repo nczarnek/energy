@@ -4,31 +4,32 @@
 %
 % runParsonAnalysis.m
 % The purpose of this function is to run the Parson analysis on an input
-% dataset.  It is assumed that only one 
+% dataset.  It is assumed that only one device is sent in, so that use is
+% the first column, and the device is the second.
 
-function runParsonAnalysis(eDS,varargin)
+function [errorStruct,assignedPower] = runParsonAnalysis(eDS,varargin)
 
 %% Handle varargin.
 % Set up the appliance prior models
-options.fridge_state_means = [2 180 160];
-options.fridge_state_covs = [5 100 100];
-options.fridge_trans = [0.95 0.03 0.02; 0 0 1; 0.2 0 0.8];
+options.fridgeStateMeans = [2 180 160];
+options.fridgeStateCovs = [5 100 100];
+options.fridgeTrans = [0.95 0.03 0.02; 0 0 1; 0.2 0 0.8];
 
-options.micro_state_means = [4 1700];
-options.micro_state_covs = [100 1000];
-options.micro_trans = [0.99 0.01; 1 0];
+options.mwStateMeans = [4 1700];
+options.mwStateCovs = [100 1000];
+options.mwTrans = [0.99 0.01; 1 0];
 
-options.wd_state_means = [0 5000];
-options.wd_state_covs = [100 5000];
-options.wd_trans = [0.9 0.1; 0.5 0.5];
+options.wdStateMeans = [0 5000];
+options.wdStateCovs = [100 5000];
+options.wdTrans = [0.9 0.1; 0.5 0.5];
 
-options.dw_state_means = [0 1400];
-options.dw_state_covs = [100 1300];
-options.dw_trans = [0.9999 0.0001; 0.3 0.7];
+options.dwStateMeans = [0 1400];
+options.dwStateCovs = [100 1300];
+options.dwTrans = [0.9999 0.0001; 0.3 0.7];
 
-options.ac_state_means = [4 2300];
-options.ac_state_covs = [100 2300];
-options.ac_trans = [0.99 0.01; 0.9 0.1];
+options.acStateMeans = [4 2300];
+options.acStateCovs = [100 2300];
+options.acTrans = [0.99 0.01; 0.9 0.1];
 
 options.fridgeOn = true;
 options.mwOn = false;
@@ -36,23 +37,18 @@ options.wdOn = false;
 options.dwOn = false;
 options.acOn = false;
 
-options.starting_point = 1;
-
-% Device signals
-options.fridge = [];
-options.mw = [];
-options.wd = [];
-options.dw = [];
-options.ac = [];
-
-
+options.startingPoint = 1;
 % Default window lengths for REDD (should not change for others):
 % fridge -> 200
 % mw -> 6
 % wd ->20
 % dw -> 30
 % ac -> 20
-options.window_length = 200;
+options.fridgeWindowLength = 200; % default for the refrigerator
+options.mwWindowLength = 6;
+options.wdWindowLength = 20;
+options.dwWindowLength = 30;
+options.acWindowLength = 20;
 
 % Default training_length for all:
 % fridge - 3000
@@ -60,7 +56,11 @@ options.window_length = 200;
 % wd - 5000
 % dw - 5000
 % ac - 2500
-options.training_length = 3000;
+options.fridgeTrainingLength = 3000;
+options.mwTrainingLength = 4000;
+options.wdTrainingLength = 5000;
+options.dwTrainingLength  = 5000;
+options.acTrainingLength  = 2500;
 
 % Default likelihood thresholds:
 % fridge - 0.01
@@ -68,7 +68,11 @@ options.training_length = 3000;
 % wd - 0.001
 % dw - 0.001
 % ac - 0.001
-options.lik_thres = 0.01;
+options.fridgeLikThres = 0.01;
+options.mwLikThres = 0.00001;
+options.wdLikThres = 0.001;
+options.dwLikThres = 0.001;
+options.acLikThres = 0.001;
 
 % Default number of training windows
 % fridge - 3
@@ -76,58 +80,168 @@ options.lik_thres = 0.01;
 % wd - 3
 % dw - 2
 % ac - 4
-options.num_of_windows = 3;
+options.fridgeNumOfWindows = 3;
+options.mwNumOfWindows = 4;
+options.wdNumOfWindows = 3;
+options.dwNumOfWindows = 2;
+options.acNumOfWindows = 4;
 
 parsedOuts = prtUtilSimpleInputParser(options,varargin);
 
 %%
-fridge_state_means = parsedOuts.fridge_state_means;
-fridge_state_covs = parsedOuts.fridge_state_covs;
-fridge_trans = parsedOuts.fridge_trans;
-micro_state_means = parsedOuts.micro_state_means;
-micro_state_covs = parsedOuts.micro_state_covs;
-micro_trans = parsedOuts.micro_trans;
-wd_state_means = parsedOuts.wd_state_means;
-wd_state_covs = parsedOuts.wd_state_covs;
-wd_trans = parsedOuts.wd_trans;
-dw_state_means = parsedOuts.dw_state_means;
-dw_state_covs = parsedOuts.dw_state_covs;
-dw_trans = parsedOuts.dw_trans;
-ac_state_means = parsedOuts.ac_state_means;
-ac_state_covs = parsedOuts.ac_state_covs;
-ac_trans = parsedOuts.ac_trans;
+fridgeStateMeans = parsedOuts.fridgeStateMeans;
+fridgeStateCovs = parsedOuts.fridgeStateCovs;
+fridgeTrans = parsedOuts.fridgeTrans;
+mwStateMeans = parsedOuts.mwStateMeans;
+mwStateCovs = parsedOuts.mwStateCovs;
+mwTrans = parsedOuts.mwTrans;
+wdStateMeans = parsedOuts.wdStateMeans;
+wdStateCovs = parsedOuts.wdStateCovs;
+wdTrans = parsedOuts.wdTrans;
+dwStateMeans = parsedOuts.dwStateMeans;
+dwStateCovs = parsedOuts.dwStateCovs;
+dwTrans = parsedOuts.dwTrans;
+acStateMeans = parsedOuts.acStateMeans;
+acStateCovs = parsedOuts.acStateCovs;
+acTrans = parsedOuts.acTrans;
 fridgeOn = parsedOuts.fridgeOn;
 mwOn = parsedOuts.mwOn;
 wdOn = parsedOuts.wdOn;
 dwOn = parsedOuts.dwOn;
 acOn = parsedOuts.acOn;
-starting_point = parsedOuts.starting_point;
-window_length = parsedOuts.window_length;
-training_length = parsedOuts.training_length;
-lik_thres = parsedOuts.lik_thres;
-fridge = parsedOuts.fridge;
-mw = parsedOuts.mw;
-dw = parsedOuts.dw;
-wd = parsedOuts.wd;
-ac = parsedOuts.ac;
+startingPoint = parsedOuts.startingPoint;
+% windowLength = parsedOuts.windowLength;
+% trainingLength = parsedOuts.trainingLength;
+% likThres = parsedOuts.likThres;
+% numOfWindows = parsedOuts.numOfWindows;
 
-%%
-transition_matrix = {fridge_trans, micro_trans, wd_trans, dw_trans, dw_trans, ac_trans};
-state_means = {fridge_state_means, micro_state_means, wd_state_means, dw_state_means, dw_trans, ac_state_means};
-state_covs = {fridge_state_covs, micro_state_covs, wd_state_covs, dw_state_covs, dw_trans, ac_state_covs};
-always_on = {0, 3, 0, 0, 0, 4};
+%% Define the state means, covariances, and transition matrix.
+if fridgeOn
+    stateMeans = fridgeStateMeans;
+    stateCovs = fridgeStateCovs;
+    stateTrans = fridgeTrans;
+    windowLength = parsedOuts.fridgeWindowLength;
+    trainingLength = parsedOuts.fridgeTrainingLength;
+    likThres = parsedOuts.fridgeLikThres;
+    numOfWindows = parsedOuts.fridgeNumOfWindows;
+elseif mwOn
+    stateMeans = mwStateMeans;
+    stateCovs = mwStateCovs;
+    stateTrans = mwTrans;
+    windowLength = parsedOuts.mwWindowLength;
+    trainingLength = parsedOuts.mwTrainingLength;
+    likThres = parsedOuts.mwLikThres;
+    numOfWindows = parsedOuts.mwNumOfWindows;
+elseif wdOn
+    stateMeans = wdStateMeans;
+    stateCovs = wdStateCovs;
+    stateTrans = wdTrans;
+    windowLength = parsedOuts.wdWindowLength;
+    trainingLength = parsedOuts.wdTrainingLength;
+    likThres = parsedOuts.wdLikThres;
+    numOfWindows = parsedOuts.wdNumOfWindows;
+elseif dwOn
+    stateMeans = dwStateMeans;
+    stateCovs = dwStateCovs;
+    stateTrans = dwTrans;
+    windowLength = parsedOuts.dwWindowLength;
+    trainingLength = parsedOuts.dwTrainingLength;
+    likThres = parsedOuts.dwLikThres;
+    numOfWindows = parsedOuts.dwNumOfWindows;
+elseif acOn
+    stateMeans = acStateMeans;
+    stateCovs = acStateCovs;
+    stateTrans = acTrans;
+    windowLength = parsedOuts.acWindowLength;
+    trainingLength = parsedOuts.acTrainingLength;
+    likThres = parsedOuts.acLikThres;
+    numOfWindows = parsedOuts.acNumOfWindows;
+end    
 
-training_type = 2; %1 = no training, 2 = agg training, 3 = submetered training
+% always_on = {0, 3, 0, 0, 0, 4};
 
 residue = eDS.data(:,1);
+appliancePower = eDS.data(:,2);
 
-inferred_power = zeros(numel(residue),1);
+%% Only deal with the on times for the current dataset
+% Take care of this before sending it in.
+% kL = [eDS.observationInfo.keepLogicals]';
+% eDS = eDS.retainObservations(kL);
 
-deviceOn = [fridgeOn;mwOn;wdOn;dwOn;acOn];
+%% Calculate the difference model parameters.
+nStates = numel(stateMeans);
+init = ones(1,nStates)/nStates;
+idx = repmat(1:nStates,nStates,1);
+emitMean = stateMeans(idx) - stateMeans(idx');
+emitCov = stateCovs(idx) + stateCovs(idx');
 
-for dInc = 1:numel(deviceOn)
-    if deviceOn(dInc)
-        appliance = 
-    end
+%% Make the difference hmm
+priorDhmmBnet = make_dhmm(init,stateMeans,stateCovs,...
+    emitMean,emitCov,...
+    stateTrans);
+
+priorHmmBnet = make_hmm(init,stateMeans,stateCovs,stateTrans);
+
+observedPower = residue;
+diffs = [0 diff(observedPower)'];
+evidence = {};
+evidence(2,:) = num2cell(diffs);
+T = length(evidence);
+
+%% Create smoothing engine
+engine = smoother_engine(jtree_2TBN_inf_engine(priorDhmmBnet));
+
+%% Assume trainng type is 2
+trainingData = find_training_ranges_generic(...
+    residue(startingPoint:startingPoint + trainingLength - 1),...
+    windowLength,priorDhmmBnet,numOfWindows);
+
+%% Train the models
+[trainedDhmmBnet,loglik] = learn_params_generic(priorDhmmBnet,diff(trainingData));
+try
+    [trainedHmmBnet,hmmLoglik] = learn_params_generic(priorHmmBnet,trainingData);
+catch err
+    trainedHmmBnet = priorHmmBnet;
 end
-appliance_idx = appliance + 1;
+hmmEmissions = struct(trainedHmmBnet.CPD{2});
+trainedDhmmBnet.CPD{1} = tabular_CPD(trainedDhmmBnet,1,'CPT',ones(1,length(init))/length(init));
+trainedDhmmBnet.CPD{2} = trainedHmmBnet.CPD{2};
+trainedDhmmBnet.CPD{3} = priorDhmmBnet.CPD{3};
+
+%% Infer power with the Viterbi algorithm
+evidence(3,:) = num2cell(observedPower);
+[mpe,ll,max_prob,ignored_obs] = my_viterbi_diff2(trainedDhmmBnet,evidence,1,likThres);
+
+ignored_obs = logical(ignored_obs);
+
+%% What power was inferred from this calculation?
+[~,stateAssignments] = max(max_prob);
+
+structHmm = struct(trainedHmmBnet.CPD{2});
+stateMeans = structHmm.mean;
+
+assignedPower = zeros(T,1);
+
+for stateIdx = unique(stateAssignments)
+    assignedPower(stateAssignments == stateIdx) = stateMeans(stateIdx);
+end
+
+%% Total disaggregation error
+totalDisaggregationErrorInclusive = abs(sum(assignedPower) - sum(appliancePower))/sum(appliancePower);
+
+%% RMS error
+rmsErrorInclusive = sqrt(1/T * sum((assignedPower - appliancePower).^2));
+
+%% Account for the ignored observations
+assignedPower(ignored_obs) = 0;
+appliancePower(ignored_obs) = 0;
+
+totalDisaggregationError = abs(sum(assignedPower) - sum(appliancePower))/sum(appliancePower);
+
+rmsError = sqrt(1/T * sum((assignedPower - appliancePower).^2));
+
+errorStruct.totalDisaggregationErrorInclusive = totalDisaggregationErrorInclusive;
+errorStruct.totalDisaggregationError = totalDisaggregationError;
+errorStruct.rmsErrorInclusive = rmsErrorInclusive;
+errorStruct.rmsError = rmsError;
+errorStruct.ignoredObs = ignored_obs;

@@ -79,36 +79,36 @@ classdef energyDataSetClass < prtDataSetClass
             
             energyStruct = cell2struct(energyCells',featureNames',2);
             
-%             
-%             if isempty(varargin)
-%                 % Use a trapezoidal approximation of the energy.
-%                 componentEnergy = trapz(obj.data,1)';
-%                 
-%                 featureNames = obj.getFeatureNames';
-%                 
-%                 nC = obj.nFeatures;
-%             else
-%                 componentEnergy = trapz(obj.data(:,varargin{1}(:)))';
-%                 
-%                 featureNames = obj.getFeatureNames(varargin{1}(:))';
-%                 
-%                 nC = max(size(varargin{1}));
-%             end
-%             
-%             energyCells = cell(nC,1);
-%             
-%             for rInc = 1:nC
-%                 featureNames{rInc}(ismember(featureNames{rInc},' ,.:;!')) = [];
-%                 energyCells{rInc} = componentEnergy(rInc);
-%             end
-%             
-%             energyStruct = cell2struct(energyCells',featureNames',2);
+            %
+            %             if isempty(varargin)
+            %                 % Use a trapezoidal approximation of the energy.
+            %                 componentEnergy = trapz(obj.data,1)';
+            %
+            %                 featureNames = obj.getFeatureNames';
+            %
+            %                 nC = obj.nFeatures;
+            %             else
+            %                 componentEnergy = trapz(obj.data(:,varargin{1}(:)))';
+            %
+            %                 featureNames = obj.getFeatureNames(varargin{1}(:))';
+            %
+            %                 nC = max(size(varargin{1}));
+            %             end
+            %
+            %             energyCells = cell(nC,1);
+            %
+            %             for rInc = 1:nC
+            %                 featureNames{rInc}(ismember(featureNames{rInc},' ,.:;!')) = [];
+            %                 energyCells{rInc} = componentEnergy(rInc);
+            %             end
+            %
+            %             energyStruct = cell2struct(energyCells',featureNames',2);
         end
         
         
         %% rankComponentsByEnergy
         % Same as findComponentEnergy, execpt with ranking.
-        function [componentEnergy,energyStruct] = rankComponentsByEnergy(obj,varargin)
+        function [componentEnergy,energyStruct,energyIdx] = rankComponentsByEnergy(obj,varargin)
             if isempty(varargin)
                 % Use a trapezoidal approximation of the energy.
                 componentEnergy = trapz(obj.data,1)';
@@ -124,6 +124,8 @@ classdef energyDataSetClass < prtDataSetClass
                 nC = max(size(varargin{1}));
             end
             
+            componentEnergy = componentEnergy/trapz(obj.data(:,1));
+            
             [~,eIdx] = sort(componentEnergy,'descend');
             
             featureNames = featureNames(eIdx);
@@ -137,6 +139,8 @@ classdef energyDataSetClass < prtDataSetClass
             end
             
             energyStruct = cell2struct(energyCells',featureNames',2);
+            
+            energyIdx = eIdx;
         end
         
         
@@ -240,7 +244,7 @@ classdef energyDataSetClass < prtDataSetClass
             
             xT = obj.getTimesFromUTC('zeroTimes',false,'timeScale','days');
             yT = obj.getTimesFromUTC('timeScale',timeScale);
-
+            
             
             for dInc = 1:numel(focusDevice)
                 focusDevice = focusDevice(dInc);
@@ -334,6 +338,7 @@ classdef energyDataSetClass < prtDataSetClass
             options.XL = [];
             options.useCurrentFigure = false;
             options.lineStyle = [];
+            options.focusIndices = [];
             parsedOut = prtUtilSimpleInputParser(options,varargin);
             device = parsedOut.device;
             combinedPlot = parsedOut.combinedPlot;
@@ -342,6 +347,7 @@ classdef energyDataSetClass < prtDataSetClass
             XL = parsedOut.XL;
             useCurrentFigure = parsedOut.useCurrentFigure;
             lineStyle = parsedOut.lineStyle;
+            focusIndices = parsedOut.focusIndices;
             
             xT = obj.getTimesFromUTC('timeScale',timeScale,'zeroTimes',zeroTimes);
             
@@ -354,9 +360,17 @@ classdef energyDataSetClass < prtDataSetClass
                     figure;
                 end
                 if isempty(lineStyle)
-                    plot(xT,obj.data(:,device))
+                    if isempty(focusIndices)
+                        plot(xT,obj.data(:,device))
+                    else
+                        plot(xT(focusIndices),obj.data(focusIndices,device))
+                    end
                 else
-                    plot(xT,obj.data(:,device),lineStyle)
+                    if isempty(focusIndices)
+                        plot(xT,obj.data(:,device),lineStyle)
+                    else
+                        plot(xT(focusIndices),obj.data(focusIndices,device),lineStyle)
+                    end
                 end
                 legend(obj.getFeatureNames(device))
                 xlabel(['Time (',timeScale,')'])
@@ -383,11 +397,19 @@ classdef energyDataSetClass < prtDataSetClass
                     else
                         figure;
                     end
-%                     plot(xT,obj.data(:,device(dInc)))
+                    %                     plot(xT,obj.data(:,device(dInc)))
                     if isempty(lineStyle)
-                        plot(xT,obj.data(:,device(dInc)))
+                        if isempty(focusIndices)
+                            plot(xT,obj.data(:,device(dInc)))
+                        else
+                            plot(xT(focusIndices),obj.data(focusIndices,device(dInc)))
+                        end
                     else
-                        plot(xT,obj.data(:,device(dInc)),lineStyle)
+                        if isempty(focusIndices)
+                            plot(xT,obj.data(:,device(dInc)),lineStyle)
+                        else
+                            plot(xT(focusIndices),obj.data(focusIndices,device(dInc)),lineStyle)
+                        end
                     end
                     
                     lH = findobj(gcf,'tag','legend');
@@ -412,6 +434,70 @@ classdef energyDataSetClass < prtDataSetClass
             end
             
             
+            
+        end
+        
+        %% This function allows us to see a breakdown of the component 
+        % energy as a percent of the total energy consumed.
+        function fH = barEnergy(obj,varargin)
+            options.newFigure = true;
+            options.retainFeatures = [obj.getFeatureInfo.pecanClass]';
+            options.newSum = true;
+            options.combineFeatures = [];
+            options.percent = false;
+            options.ascend = true;
+            options.vertical = false;
+            options.upsideDown = false;
+            parsedOuts = prtUtilSimpleInputParser(options,varargin);
+            newFigure = parsedOuts.newFigure;
+            retainFeatures = parsedOuts.retainFeatures(:);
+            newSum = parsedOuts.newSum;
+            combineFeatures = parsedOuts.combineFeatures;
+            percent = parsedOuts.percent;
+            ascend = parsedOuts.ascend;
+            vertical = parsedOuts.vertical;
+            upsideDown = parsedOuts.upsideDown;
+            
+            %% Only retain the features that were sent in.
+            pCs = [obj.getFeatureInfo.pecanClass]';
+            plotSet = obj.retainFeatures(ismember(pCs,cat(1,pCs(1),retainFeatures)));
+            
+            if newSum
+                plotSet.data(:,1) = sum(plotSet.data(:,2:end),2);
+            end
+            
+            [a,~,c] = plotSet.rankComponentsByEnergy;
+            
+            if percent
+                a = a*100;
+            end
+            
+            componentNames = plotSet.getFeatureNames(c(end:-1:2));
+            
+            if newFigure
+                figure;
+            end
+            
+            if ascend
+                fH = bar(a(plotSet.nFeatures:-1:2));
+                set(gca,'xtick',1:plotSet.nFeatures - 1)
+                set(gca,'xticklabel',componentNames,'FontSize',13)
+            else
+                fH = bar(a(2:plotSet.nFeatures));
+                set(gca,'xtick',1:plotSet.nFeatures - 1)
+                set(gca,'xticklabel',componentNames(end:-1:1),'FontSize',13)
+            end
+            
+            xlim([0 plotSet.nFeatures])
+            if vertical
+                if upsideDown
+                    view(180,90)
+                end
+            else
+                view(90,-90)
+            end
+            
+            title('Fraction of energy consumed per appliance')
             
         end
         
@@ -514,7 +600,7 @@ classdef energyDataSetClass < prtDataSetClass
             
             bluedEvents.onEventsTimes = yT(onEventsIdx);
             bluedEvents.offEventsTimes = yT(offEventsIdx);
-                    
+            
         end
         
         
@@ -523,9 +609,9 @@ classdef energyDataSetClass < prtDataSetClass
         function energyFeats = extractEventData(obj,eventTimes,varargin)
             %% Deal with varargin
             options.windowInS = 61;% take data from 1 minute on each side
-%             options.secondIncrement = 1;% adjust the resolution of the
-%             features, e.g. take data at 1:1:60 or 1:8:60
-
+            %             options.secondIncrement = 1;% adjust the resolution of the
+            %             features, e.g. take data at 1:1:60 or 1:8:60
+            
             % default to extract features from the aggregate load
             options.devices = 1;
             % Allow on, off, or both to be extracted
@@ -537,6 +623,8 @@ classdef energyDataSetClass < prtDataSetClass
             % subtract out the minimum from each feature such that
             % everything starts at the baseline
             options.zeroFeatures = true;
+            % concatenated features
+            options.catFeatures = false;
             
             parsedOut = prtUtilSimpleInputParser(options,varargin);
             
@@ -546,6 +634,7 @@ classdef energyDataSetClass < prtDataSetClass
             featureType = parsedOut.featureType;
             className = parsedOut.className;
             zeroFeatures = parsedOut.zeroFeatures;
+            catFeatures = parsedOut.catFeatures;
             
             %% Only keep the with proper measurements.
             if isfield(obj.observationInfo,'keepLogicals')
@@ -571,12 +660,16 @@ classdef energyDataSetClass < prtDataSetClass
             
             eventTimes.offEventsTimes = round(eventTimes.offEventsTimes*obsPerDay)/obsPerDay;
             
-            energyFeats = repmat(energyFeatureClass,numel(devices),1);
+            if catFeatures
+                energyFeats = energyFeatureClass;
+            else
+                energyFeats = repmat(energyFeatureClass,numel(devices),1);
+            end
             
             %% Extract features from each event
             for dInc = 1:numel(devices)
-%                 currentDevice = devices(dInc);
-%                 
+                currentDevice = devices(dInc);
+                %
                 %% Go through the different devices and create a new energyFeatureClass for each
                 currentFeats = energyFeatureClass;
                 
@@ -600,7 +693,7 @@ classdef energyDataSetClass < prtDataSetClass
                         featureIdx = eventIdx - obsPerHalf:eventIdx + obsPerHalf;
                         
                         if ~any(featureIdx<1)&&~any(featureIdx>obj.nObservations) && all(kL(featureIdx) == 1)
-                            featureVector = obj.data(featureIdx,dInc)';
+                            featureVector = obj.data(featureIdx,currentDevice)';
                             
                             if zeroFeatures
                                 featureVector = featureVector - min(featureVector);
@@ -622,7 +715,7 @@ classdef energyDataSetClass < prtDataSetClass
                         featureIdx = eventIdx - obsPerHalf:eventIdx + obsPerHalf;
                         
                         if ~any(featureIdx<1)||~any(featureIdx>obj.nObservations)
-                            featureVector = obj.data(featureIdx,dInc)';
+                            featureVector = obj.data(featureIdx,currentDevice)';
                             
                             if zeroFeatures
                                 featureVector = featureVector - min(featureVector);
@@ -651,7 +744,7 @@ classdef energyDataSetClass < prtDataSetClass
                         featureIdx = eventIdx - obsPerHalf:eventIdx + obsPerHalf;
                         
                         if ~any(featureIdx<1)&&~any(featureIdx>obj.nObservations) && all(kL(featureIdx) == 1)
-                            featureVector = obj.data(featureIdx,dInc)';
+                            featureVector = obj.data(featureIdx,currentDevice)';
                             
                             if zeroFeatures
                                 featureVector = featureVector - min(featureVector);
@@ -682,7 +775,7 @@ classdef energyDataSetClass < prtDataSetClass
                         featureIdx = eventIdx - obsPerHalf:eventIdx + obsPerHalf;
                         
                         if ~any(featureIdx<1)&&~any(featureIdx>obj.nObservations) && all(kL(featureIdx) == 1)
-                            featureVector = obj.data(featureIdx,dInc)';
+                            featureVector = obj.data(featureIdx,currentDevice)';
                             
                             if zeroFeatures
                                 featureVector = featureVector - min(featureVector);
@@ -713,12 +806,169 @@ classdef energyDataSetClass < prtDataSetClass
                 
                 currentFeats.classNames = className;
                 
-                energyFeats(dInc) = currentFeats;
+                if catFeatures
+                    energyFeats = energyFeats.catFeatures(currentFeats);
+                    energyFeats.targets = currentFeats.targets;
+                    energyFeats.observationInfo = currentFeats.observationInfo;
+                    energyFeats.classNames = className;
+                else
+                    energyFeats(dInc) = currentFeats;
+                end
                 
             end
             
         end
         
+        %% Determine the average power consumed for BLUED
+        function powerOut = findAveragePowerBlued(obj,eventTimes,allEnergyFeatures,varargin)
+            options.zeroWindow = 61;
+            options.removeTails = true;
+            options.tailPercent = 5;
+            parsedOuts = prtUtilSimpleInputParser(options,varargin);
+            zeroWindow = parsedOuts.zeroWindow;
+            removeTails = parsedOuts.removeTails;
+            tailPercent = parsedOuts.tailPercent;
+            %% Get the time in seconds.
+            xT = obj.getTimesFromUTC('timeScale','s');
+            yT = obj.getTimesFromUTC('timeScale','days','zeroTimes',false);
+            
+            %% Assume we're extracting from the aggregate load
+            powerOut = repmat(struct('averagePower',[],'averageTimeInS',[],...
+                'classNumber',[],'fromAggregate',[],'numberInstances',[]),...
+                allEnergyFeatures.nClasses,1);
+            
+            
+            %% Ensure that the event times are all sorted properly.
+            for eInc = 1:numel(eventTimes)
+                [eventTimes(eInc).onEventsTimes,sortIdx] = unique(eventTimes(eInc).onEventsTimes);
+                eventTimes(eInc).onEventsIndex = eventTimes(eInc).onEventsIndex(sortIdx);
+                eventTimes(eInc).onClass = eventTimes(eInc).onClass(sortIdx);
+                
+                [eventTimes(eInc).offEventsTimes,sortIdx] = unique(eventTimes(eInc).offEventsTimes);
+                eventTimes(eInc).offEventsIndex = eventTimes(eInc).offEventsIndex(sortIdx);
+                eventTimes(eInc).offClass = eventTimes(eInc).offClass(sortIdx);
+            end
+            
+            
+            for classInc = 1:allEnergyFeatures.nClasses
+                %% Find the events corresponding to the current class label.
+                currentClass = false(numel(eventTimes),1);
+                for eInc = 1:numel(eventTimes)
+                    if eventTimes(eInc).classNumber == allEnergyFeatures.uniqueClasses(classInc);
+                        currentClass(eInc) = true;
+                    end
+                end
+                
+                eventIdx = find(currentClass);
+                currentFeature = eventTimes(currentClass).classNumber;
+                %% Go through each of the events.
+                energyUsed = zeros(numel(eventTimes(eventIdx).onEventsTimes),1);
+                onTime = energyUsed;
+                
+                for eInc = 1:numel(eventTimes(eventIdx).onEventsTimes)
+                    %% Find the next off time that is larger than the current time
+                    currentOn = eventTimes(eventIdx).onEventsTimes(eInc);
+                    offIdx = find(eventTimes(eventIdx).offEventsTimes>currentOn,1,'first');
+                    
+                    if ~isempty(offIdx)
+                        currentOff = eventTimes(eventIdx).offEventsTimes(offIdx);
+                        focusIndices = yT>=currentOn & yT<=currentOff;
+                        
+                        if all(focusIndices == false)
+                            onIdx = find(yT>=currentOn,1,'first');
+                            focusIndices(onIdx) = true;
+                        end
+                        
+                        startInS = xT(find(focusIndices,1,'first'));
+                        endInS = xT(find(focusIndices,1,'last'));
+                        
+                        powerSignature = obj.data(focusIndices,1);
+                        
+                        %% Zero out the power
+                        zeroIndices = yT>=currentOn - zeroWindow & yT<=currentOff + zeroWindow;
+                        
+                        if all(zeroIndices == false)
+                            onIdx = find(yT>=currentOn,1,'first');
+                            zeroIndices(onIdx) = true;
+                        end
+                        
+                        windowSignature = obj.data(zeroIndices,1);
+                        powerSignature = powerSignature - min(windowSignature);
+                        
+                        try
+                            energyUsed(eInc) = trapz(xT(focusIndices),powerSignature);
+                        catch
+                            %% Approximate the energy used by on for one minute.
+                            % This is appropriate for the downsampled data.
+                            energyUsed(eInc) = powerSignature(1)*60;
+                        end
+                        
+                        onTime(eInc)= endInS - startInS + 1;
+                    end
+                end
+                %% Remove the times that were not covered.
+                zeroTimes = find(energyUsed == 0);
+                
+                energyUsed(zeroTimes) = [];
+                onTime(zeroTimes) = [];
+                
+                numInstances = numel(energyUsed);
+                
+                if numInstances ~= 0
+                    %% Handle outliers
+                    if removeTails
+                        [energyUsed,newIdx] = sort(energyUsed);
+                        onTime = onTime(newIdx);
+                        
+%                         
+%                         startKeep = round(tailPercent/100*numInstances);
+%                         endKeep = round((100 - tailPercent)/100*numInstances);
+%                         
+
+                        %% Use the median and one point on both sides for the power calculation
+                        if ~mod(numInstances,2)
+                            %% Even
+                            energyUsed = energyUsed(numInstances/2:numInstances/2+1);
+                            newIdx = newIdx(numInstances/2:numInstances/2+1);
+                            onTime = onTime(numInstances/2:numInstances/2+1);
+                        else
+                            %% odd
+                            medianEnergy = median(energyUsed);
+                        
+                            medianIdx = find(energyUsed == medianEnergy,1,'first');
+                            
+                            try
+                                energyUsed = energyUsed(medianIdx - 1:medianIdx + 1);
+                                newIdx = newIdx(medianIdx - 1:medianIdx + 1);
+                                onTime = onTime(medianIdx - 1:medianIdx + 1);
+                            catch
+                                energyUsed = energyUsed(medianIdx);
+                                newIdx = newIdx(medianIdx);
+                                onTime = onTime(medianIdx);
+                            end
+                        end
+                        
+%                         
+%                         focusIdx = max(startKeep,1):min(endKeep,numInstances);
+%                         
+%                         energyUsed = energyUsed(focusIdx);
+%                         newIdx = newIdx(focusIdx);
+%                         onTime = onTime(newIdx);
+                    end
+                    
+                end
+                
+                %% Find the average power for the current device
+                powerOut(classInc).averagePower = sum(energyUsed)/sum(onTime);
+                powerOut(classInc).averageTimeInS = mean(onTime);
+                powerOut(classInc).classNumber = currentFeature;
+                powerOut(classInc).fromAggregate = true;
+                powerOut(classInc).className = eventTimes(currentClass).className;
+                powerOut(classInc).numberInstances = numel(energyUsed);
+                
+                
+            end
+        end
         
         %% Determine the average power consumed based on events
         function powerOut = findAveragePower(obj,eventTimes,varargin)
@@ -728,14 +978,28 @@ classdef energyDataSetClass < prtDataSetClass
             options.zeroPower = true;
             options.removeTails = true;
             options.tailPercent = 5;
+            options.zeroWindow = 61;
+            options.bluedDevices = [];
             parsedOut = prtUtilSimpleInputParser(options,varargin);
             features = parsedOut.features;
             fromAggregate = parsedOut.fromAggregate;
             zeroPower = parsedOut.zeroPower;
             removeTails = parsedOut.removeTails;
             tailPercent = parsedOut.tailPercent;
-            
+            zeroWindow = parsedOut.zeroWindow;
+            zeroWindow = zeroWindow/86400;
             pecanClasses = [obj.featureInfo.pecanClass]';
+            
+            %% Ensure that the event times are all sorted properly.
+            for eInc = 1:numel(eventTimes)
+                [eventTimes(eInc).onEventsTimes,sortIdx] = unique(eventTimes(eInc).onEventsTimes);
+                eventTimes(eInc).onEventsIndex = eventTimes(eInc).onEventsIndex(sortIdx);
+                eventTimes(eInc).onClass = eventTimes(eInc).onClass(sortIdx);
+                
+                [eventTimes(eInc).offEventsTimes,sortIdx] = unique(eventTimes(eInc).offEventsTimes);
+                eventTimes(eInc).offEventsIndex = eventTimes(eInc).offEventsIndex(sortIdx);
+                eventTimes(eInc).offClass = eventTimes(eInc).offClass(sortIdx);
+            end
             
             %% Get the time in seconds.
             xT = obj.getTimesFromUTC('timeScale','s');
@@ -743,16 +1007,13 @@ classdef energyDataSetClass < prtDataSetClass
             
             %% Assume that we're extracting from the aggregate load
             extractionFeature = 1;
-            
             powerOut = repmat(struct('averagePower',[],'averageTimeInS',[],...
                 'classNumber',[],'fromAggregate',[],'numberInstances',[]),numel(features),1);
             
             %% Go through the events.
             for dInc = 1:numel(features)
                 currentFeature = features(dInc);
-                
                 fIdx = pecanClasses == currentFeature;
-                
                 eIdx = false(numel(eventTimes),1);
                 
                 %% Find the eventTimes structure that corresponds to the current device.
@@ -765,13 +1026,10 @@ classdef energyDataSetClass < prtDataSetClass
                 eventIndex = find(eIdx);
                 
                 if ~isempty(eventIndex)
-                    
                     aveT = tic;
-                    
                     if numel(eventIndex)>1
                         error('You have multiple devices with the same class')
                     end
-                    
                     if ~fromAggregate
                         %% Find the matching datastream in the energyDataSet
                         extractionFeature = find(pecanClasses == currentFeature);
@@ -790,8 +1048,12 @@ classdef energyDataSetClass < prtDataSetClass
                         
                         if ~isempty(offIdx)
                             currentOff = eventTimes(eventIndex).offEventsTimes(offIdx);
-                            
                             focusIndices = yT>=currentOn & yT<=currentOff;
+
+                            if all(focusIndices == false)
+                                onIdx = find(yT>=currentOn,1,'first');
+                                focusIndices(onIdx) = true;
+                            end
                             
                             startInS = xT(find(focusIndices,1,'first'));
                             endInS = xT(find(focusIndices,1,'last'));
@@ -799,10 +1061,30 @@ classdef energyDataSetClass < prtDataSetClass
                             powerSignature = obj.data(focusIndices,extractionFeature);
                             
                             if zeroPower
-                                powerSignature = powerSignature - min(powerSignature);
+                                zeroIndices = yT>=currentOn - zeroWindow & yT<=currentOff + zeroWindow;
+                                
+                                if all(zeroIndices == false)
+                                    onIdx = find(yT>=currentOn,1,'first');
+                                    zeroIndices(onIdx) = true;
+                                end
+                                
+                                windowSignature = obj.data(zeroIndices,extractionFeature);
+                                
+                                powerSignature = powerSignature - min(windowSignature);
                             end
                             
-                            energyUsed(eInc) = trapz(xT(focusIndices),powerSignature);
+                            try
+                                energyUsed(eInc) = trapz(xT(focusIndices),powerSignature);
+                            catch
+                                if numel(find(focusIndices)) == 1
+                                    %% This for downsampled datasets, this 
+                                    % means that the original event lasted
+                                    % less than 1 minute.  Therefore, just
+                                    % consider the energy used to be the
+                                    % power over 60 s.
+                                    energyUsed(eInc) = powerSignature * 60;
+                                end
+                            end
                             
                             onTime(eInc)= endInS - startInS + 1;
                         end
@@ -853,9 +1135,76 @@ classdef energyDataSetClass < prtDataSetClass
                     
                 end
             end
+            
+% goes right after if isempty(offIdx)            
+%                             if zeroPower
+%                                 focusIndices = yT>=currentOn - zeroWindow & yT<=currentOff + zeroWindow;
+%                                 
+%                             else
+%                                 focusIndices = yT>=currentOn & yT<=currentOff;
+%                             end
         end
         
-        %% Assign power to specific devices based on the current 
+        
+        %% Assign power to the BLUED data set
+        function assignedPower = assignPowerBlued(obj,eventTimes,averagePowers,varargin)
+            options.useOff = false;
+            parsedOut = prtUtilSimpleInputParser(options,varargin);
+            useOff = parsedOut.useOff;
+            
+            %% Establish the new dataset and zero it out
+            assignedPower = energyDataSetClass;
+            assignedPower.data = zeros(obj.nObservations,numel(averagePowers)+1);
+            
+            %% Get the times.
+            xT = obj.getTimesFromUTC('timeScale','s');
+            yT = obj.getTimesFromUTC('timeScale','days','zeroTimes',false);
+            
+            featureNames = {'use'};
+            featureInfo = repmat(struct('className',[],'classNumber',[]),numel(averagePowers)+1,1);
+            featureInfo(1).className = 'use';
+            featureInfo(1).classNumber = 0;
+            
+            %% Go through the event times and assign power based on the event labels
+            for dInc = 1:numel(averagePowers)
+                %% Find the event times that corresponds to the current class
+                currentClass = false(numel(eventTimes),1);
+                for eInc = 1:numel(eventTimes)
+                    if eventTimes(eInc).classNumber == averagePowers(dInc).classNumber
+                        currentClass(eInc) = true;
+                    end
+                end
+                
+                eIdx = find(currentClass);
+                
+                
+                if ~useOff
+                    focusIdx = false(assignedPower.nObservations,1);
+                    
+                    for eInc = 1:numel(eventTimes(eIdx).onEventsTimes)
+                        startIdx = find(yT>=eventTimes(eIdx).onEventsTimes(eInc),1,'first');
+                        
+                        startXT = xT(startIdx);
+                        endXT = startXT + averagePowers(dInc).averageTimeInS;
+                        
+                        focusIdx(xT>=startXT&xT<=endXT) = true;
+                    end
+                    assignedPower.data(focusIdx,dInc + 1) = averagePowers(dInc).averagePower;
+                    
+                    featureNames = cat(1,featureNames,averagePowers(dInc).className);
+                    featureInfo(dInc+1).className = featureNames{dInc+1};
+                    featureInfo(dInc+1).classNumber = averagePowers(dInc).classNumber;
+                end
+                
+                
+            end
+            
+            assignedPower = assignedPower.setFeatureNames(featureNames);
+            assignedPower = assignedPower.setFeatureInfo(featureInfo);
+            
+        end
+        
+        %% Assign power to specific devices based on the current
         function assignedPower = assignPower(obj,eventTimes,averagePower,varargin)
             % eventTimes -  energyEventClass object or array of objects
             % averagePower - output structure or structure array from findAveragePower
@@ -876,7 +1225,7 @@ classdef energyDataSetClass < prtDataSetClass
             xT = obj.getTimesFromUTC('timeScale','s');
             yT = obj.getTimesFromUTC('timeScale','days','zeroTimes',false);
             
-            %% Go through the eventTimes array to figure out which devices 
+            %% Go through the eventTimes array to figure out which devices
             % to assign power to
             for dInc = 1:numel(eventTimes)
                 %% Find the corresponding feature vector.
@@ -960,7 +1309,7 @@ classdef energyDataSetClass < prtDataSetClass
             obsInfo = struct('errorType',errorNames);
             
             aggregateEnergyUsed = obj.findComponentEnergy('device',1);
-                
+            
             if ~subset
                 errorMetrics = errorMetrics.setFeatureNames(obj.getFeatureNames);
                 errorMetrics.observationInfo = obsInfo;
@@ -1024,7 +1373,7 @@ classdef energyDataSetClass < prtDataSetClass
         end
         
         
-        %% Run the entire supervised disaggregation system 
+        %% Run the entire supervised disaggregation system
         function [systemResults,systemParameters] = runSupervisedSystem(obj,eventTimes,varargin)
             % Note that this assumes that the aggregate load is sent in as
             % the first eventTimes array component.
@@ -1051,7 +1400,7 @@ classdef energyDataSetClass < prtDataSetClass
             % Should the true classes be used for the assignment step?
             options.useTrueClasses = false;
             % Do you only want to focus on detection?
-%             options.onlyRunDetection = false;
+            %             options.onlyRunDetection = false;
             % Do you want to zmuv the components?
             options.zmuvFeatures = true;
             % What classifier do you want? Default is knn with k = 5
@@ -1085,6 +1434,18 @@ classdef energyDataSetClass < prtDataSetClass
             options.combinedClasses = {};
             % Do you want to name the combined classes?
             options.combinedClassNames = {};
+            % Which devices do you want to extract data from?
+            options.devices = 1;
+            % Do you want to concatenate faetures?
+            options.catFeatures = true;
+            % What do you want your min detection threshold to be for the
+            % detector?
+            options.minDetectorThreshold = 0.01;
+            % Do you want the cross val keys to be set?
+            options.xValKeys = [];
+            % Allow allEnergyFeatures to be sent in
+            options.allEnergyFeatures = energyFeatureClass;
+            options.findAssignmentErrors = true;
             
             parsedOuts = prtUtilSimpleInputParser(options,varargin);
             systemParameters = parsedOuts;
@@ -1097,7 +1458,7 @@ classdef energyDataSetClass < prtDataSetClass
             usePca = parsedOuts.usePca;
             nPcaComponents = parsedOuts.nPcaComponents;
             useTrueTimes = parsedOuts.useTrueTimes;
-%             onlyRunDetection = parsedOuts.onlyRunDetection;
+            %             onlyRunDetection = parsedOuts.onlyRunDetection;
             zmuvFeatures = parsedOuts.zmuvFeatures;
             classifier = parsedOuts.classifier;
             k = parsedOuts.k;
@@ -1115,6 +1476,12 @@ classdef energyDataSetClass < prtDataSetClass
             detectorType = parsedOuts.detectorType;
             combinedClasses = parsedOuts.combinedClasses;
             combinedClassNames = parsedOuts.combinedClassNames;
+            devices = parsedOuts.devices;
+            catFeatures = parsedOuts.catFeatures;
+            minDetectorThreshold = parsedOuts.minDetectorThreshold;
+            xValKeys = parsedOuts.xValKeys;
+            allEnergyFeatures = parsedOuts.allEnergyFeatures;
+            findAssignmentErrors = parsedOuts.findAssignmentErrors;
             
             if isempty(combinedClassNames)
                 combinedClassNames = cell(numel(combinedClasses),1);
@@ -1152,7 +1519,8 @@ classdef energyDataSetClass < prtDataSetClass
                         end
                     end
                     
-                    firstDevice = find(combinedClasses{cellInc},1,'first');
+                    firstDevice = find(cellIdx,1,'first');
+                    %                     firstDevice = find(combinedClasses{cellInc},1,'first');
                     
                     eventTimes(firstDevice) = combineEnergyEvents(eventTimes(cellIdx),...
                         'classNumber',1000 + cellInc);
@@ -1171,107 +1539,134 @@ classdef energyDataSetClass < prtDataSetClass
                 end
             end
             
-            otherAndCombinedIdx = otherIdx | combinedIdx;
+            if ~isempty(combinedClasses)&&~isempty(otherClasses)
+                otherAndCombinedIdx = otherIdx | combinedIdx;
+            elseif ~isempty(combinedClasses)
+                otherAndCombinedIdx = combinedIdx;
+            elseif ~isempty(otherClasses)
+                otherAndCombinedIdx = otherIdx;
+            else
+                otherAndCombinedIdx = false(numel(eventTimes),1);
+            end
             
             eventTimes = eventTimes(~otherAndCombinedIdx);
             
             
             %% Split up the data evenly into the number of folds
             nObsPerFold = round(obj.nObservations/nXFolds);
-             
+            
             xT = obj.getTimesFromUTC('timeScale','days','zeroTimes',false);
             
             %% Set up the aggregate energyEventClass
             detectedTestingEvents = energyEventClass;
-%             assignedEventsTotal = repmat(energyEventClass,numel(eventTimes),1);
+            %             assignedEventsTotal = repmat(energyEventClass,numel(eventTimes),1);
             
             %% Extract features for the classifier.
-            allEnergyFeatures = energyFeatureClass;
+%             allEnergyFeatures = energyFeatureClass;
+            
+            
             
             featureStart = tic;
-            if ~exist(fullfile(loadFeatureDir,'allEnergyFeatures.mat'))
-                for tInc = 2:numel(eventTimes)
-                    if ~isempty(eventTimes(tInc).onEventsTimes)
-                        tStart = tic;
-                        
-                        currentFeatures = obj.extractEventData(eventTimes(tInc),'className',...
-                            eventTimes(tInc).className,'classNumber',...
-                            eventTimes(tInc).classNumber,'featureType','on',...
-                            'windowInS',extractionWindow);
-                        
-                        allEnergyFeatures = catObservations(allEnergyFeatures,currentFeatures);
-                        tStop = toc(tStart);
-                        
-                        try
-                            className = currentFeatures.classNames{1};
-                        catch
-                            className = currentFeatures.classNames;
+            
+            %% Check if the feature dataset was already sent in.
+            if allEnergyFeatures.nFeatures == 0
+                if ~exist(fullfile(loadFeatureDir,'allEnergyFeatures.mat'))
+                    for tInc = 2:numel(eventTimes)
+                        if ~isempty(eventTimes(tInc).onEventsTimes)
+                            tStart = tic;
+                            
+                            currentFeatures = obj.extractEventData(eventTimes(tInc),'className',...
+                                eventTimes(tInc).className,'classNumber',...
+                                eventTimes(tInc).classNumber,'featureType','on',...
+                                'windowInS',extractionWindow,...
+                                'devices',devices,...
+                                'catFeatures',catFeatures);
+                            
+                            allEnergyFeatures = catObservations(allEnergyFeatures,currentFeatures);
+                            tStop = toc(tStart);
+                            
+                            try
+                                className = currentFeatures.classNames{1};
+                            catch
+                                className = currentFeatures.classNames;
+                            end
+                            
+                            fprintf(1,[num2str(tStop),'s: ',num2str(currentFeatures.nObservations),' ',className,' features extracted\n'])
                         end
-                        
-                        fprintf(1,[num2str(tStop),'s: ',num2str(currentFeatures.nObservations),' ',className,' features extracted\n'])
                     end
+                    
+                    if ~isempty(saveFeatureDir)
+                        save(fullfile(saveFeatureDir,'allEnergyFeatures.mat'),'allEnergyFeatures')
+                    end
+                else
+                    load(fullfile(loadFeatureDir,'allEnergyFeatures.mat'))
                 end
-                
-                if ~isempty(saveFeatureDir)
-                    save(fullfile(saveFeatureDir,'allEnergyFeatures.mat'),'allEnergyFeatures')
-                end
-            else
-                load(fullfile(loadFeatureDir,'allEnergyFeatures.mat'))
             end
             featureStop = toc(featureStart);
             fprintf(1,['Features extracted, ',num2str(featureStop),'s\n'])
             featureTimeStamps = [allEnergyFeatures.observationInfo.timestamp]';
             
-            %% Set up the classifier
-            switch lower(classifier)
-                case 'knn'
-                    prtClassifier = prtClassKnn('k',k) + prtDecisionMap;
-                case 'svm'
-                    if useRbf
-                        prtClassifier = prtClassBinaryToMaryOneVsAll + prtDecisionMap;
-                        prtClassifier.actionCell{1}.baseClassifier = prtClassLibSvm;
-                    else
-                        prtClassifier = prtClassBinaryToMaryOneVsAll + prtDecisionMap;
-                        prtClassifier.actionCell{1}.baseClassifier = prtClassLibSvm('kernelType',0);
-                    end
-                case 'rf'
-                    prtClassifier = prtClassTreeBaggingCap('nTrees',nTrees) + prtDecisionMap;
-            end
             
-            classStart = tic;
-%             
-%             %% ZMUV the features if desired and take the top PCs
-%             if zmuvFeatures
-%                 zM = prtPreProcZmuv;
-%                 zM = zM.train(allEnergyFeatures);
-%                 allEnergyFeatures = zM.run(allEnergyFeatures);
-%             end
-%             
-            %% Take the top PCs if desired after zmuving, if desired
-            if usePca
-                if zmuvFeatures
-                    pcedFeatures = allEnergyFeatures.getPca('onlyOn',1,...
-                        'zmuv',true,'plotPca',false);
-                else
-                    pcedFeatures = allEnergyFeatures.getPca('onlyOn',1,...
-                        'plotPca',false);
+            if findClassificationPerformance
+                
+                %% Set up the classifier
+                switch lower(classifier)
+                    case 'knn'
+                        prtClassifier = prtClassKnn('k',k) + prtDecisionMap;
+                    case 'svm'
+                        if useRbf
+                            prtClassifier = prtClassBinaryToMaryOneVsAll + prtDecisionMap;
+                            prtClassifier.actionCell{1}.baseClassifier = prtClassLibSvm;
+                        else
+                            prtClassifier = prtClassBinaryToMaryOneVsAll + prtDecisionMap;
+                            prtClassifier.actionCell{1}.baseClassifier = prtClassLibSvm('kernelType',0);
+                        end
+                    case 'rf'
+                        prtClassifier = prtClassTreeBaggingCap('nTrees',nTrees) + prtDecisionMap;
                 end
                 
-            else
-                pcedFeatures = allEnergyFeatures;
+                classStart = tic;
+
+                %% Take the top PCs if desired after zmuving, if desired
+                if usePca
+                    if zmuvFeatures
+                        pcedFeatures = allEnergyFeatures.getPca('onlyOn',1,...
+                            'zmuv',true,'plotPca',false);
+                    else
+                        pcedFeatures = allEnergyFeatures.getPca('onlyOn',1,...
+                            'plotPca',false);
+                    end
+                    
+                else
+                    pcedFeatures = allEnergyFeatures;
+                end
             end
             
             %% Perform 5 fold cross val if desired.
             if findClassificationPerformance % ~40-50 s for 18k 3 feature observations with knn and k = 5
                 tStart = tic;
-                classificationPerformance = prtClassifier.kfolds(pcedFeatures,nXFolds);
+                
+                if isempty(xValKeys)
+                    classificationPerformance = prtClassifier.kfolds(pcedFeatures,nXFolds);
+                else
+                    try
+                        %% Allow multiple cross val folds to be sent in
+                        for xvInc = 1:size(xValKeys,2)
+                            classificationPerformance(xvInc) = ...
+                                prtClassifier.crossValidate(pcedFeatures,xValKeys(:,xvInc));
+                        end
+                    catch
+                        warning('Check your cross val keys against the number of observations. \n Defaulting back to random keys.');
+                        classificationPerformance = prtClassifier.kfolds(pcedFeatures,nXFolds);
+                    end
+                end
                 tStop = toc(tStart);
                 fprintf(1,[num2str(tStop),'s for ',classifier,' ',num2str(nXFolds),'-fold cross val\n'])
+                classStop = toc(classStart);
+                fprintf(1,[num2str(nXFolds),' cross val complete, ',num2str(classStop),'s\n'])
             else
                 classificationPerformance = [];
             end
-            classStop = toc(classStart);
-            fprintf(1,[num2str(nXFolds),' cross val complete, ',num2str(classStop),'s\n'])
             
             %% Set up the testing feature object to store all of the extracted features.
             allTestingFeatures = energyFeatureClass;
@@ -1368,222 +1763,271 @@ classdef energyDataSetClass < prtDataSetClass
                 
                 
                 if ~useTrueTimes
-                    %% Run the event detector on the training data
-                    detectedTrainingEvents = detectEnergyEvents(trainData,...
-                        'halfWindowInS',detectionHalfWinInS,'device',1,...
-                        'detectorType',detectorType);
-                    
-                    
-                    tStart = tic;
-                    %% Score the performance.
-                    trainingEventDetectionPerformance = scoreEventDetectionQuickly(...
-                        detectedTrainingEvents,trainingTimes(1),eventHaloInS,'onlyOn',onlyOn);
-                    
-                    tStop = toc(tStart);
-                    fprintf(1,[num2str(tStop),'s for event detection\n'])
-                    
-                    
-                    onThreshIdx = find(trainingEventDetectionPerformance.onFa>=farThreshold,1,'first');
-                    
-                    onEventThreshold = trainingEventDetectionPerformance.onThresholds(onThreshIdx);
+                    if findClassificationPerformance
+                        %% Run the event detector on the training data
+                        detectedTrainingEvents = detectEnergyEvents(trainData,...
+                            'halfWindowInS',detectionHalfWinInS,'device',1,...
+                            'detectorType',detectorType);
+                        
+                        
+                        tStart = tic;
+                        %% Score the performance.
+                        
+                        trainingEventDetectionPerformance = scoreEventDetectionQuickly(...
+                            detectedTrainingEvents,trainingTimes(1),eventHaloInS,'onlyOn',onlyOn,...
+                            'minThreshold',minDetectorThreshold);
+                        
+                        
+                        tStop = toc(tStart);
+                        fprintf(1,[num2str(tStop),'s for event detection\n'])
+                        
+                        
+                        onThreshIdx = find(trainingEventDetectionPerformance.onFa>=farThreshold,1,'first');
+                        
+                        onEventThreshold = trainingEventDetectionPerformance.onThresholds(onThreshIdx);
+                    end
                 end
                 
                 %% Get the training features.
                 startTime = xT(startIdx);
                 endTime = xT(endIdx);
                 
-                if fInc == 1
-                    energyFeatures = allEnergyFeatures.retainObservations(featureTimeStamps>=endTime);
-                elseif fInc == nXFolds
-                    energyFeatures = allEnergyFeatures.retainObservations(featureTimeStamps<=startTime);
-                else
-                    firstFeatures = allEnergyFeatures.retainObservations(featureTimeStamps<=startTime);
-                    lastFeatures = allEnergyFeatures.retainObservations(featureTimeStamps>=endTime);
-                    energyFeatures = catObservations(firstFeatures,lastFeatures);
-                end
-                
-                
-                %% Modify the features based on input options to take the 
-                % principal components and the zscore
-                if usePca
-                    [inputFeats,inputPca,zmuv] = energyFeatures.getPca('nComponents',nPcaComponents,...
-                        'plotPca',false,'zmuv',zmuvFeatures);
-                else
-                    inputFeats = energyFeatures;
-                    if zmuvFeatures
-                        zM = prtPreProcZmuv;
-                        zM = zM.train(energyFeatures);
-                        inputFeats = zM.run(energyFeatures);
+                if findClassificationPerformance
+                    if fInc == 1
+                        energyFeatures = allEnergyFeatures.retainObservations(featureTimeStamps>=endTime);
+                    elseif fInc == nXFolds
+                        energyFeatures = allEnergyFeatures.retainObservations(featureTimeStamps<=startTime);
+                    else
+                        firstFeatures = allEnergyFeatures.retainObservations(featureTimeStamps<=startTime);
+                        lastFeatures = allEnergyFeatures.retainObservations(featureTimeStamps>=endTime);
+                        energyFeatures = catObservations(firstFeatures,lastFeatures);
                     end
-                end
-                
-                prtClassifier = prtClassifier.train(inputFeats);
-                
-                %% Are events detected or just based on truth?
-                if ~useTrueTimes
-                    %% Detect events in the testing data.
-                    testingDetectedEvents = detectEnergyEvents(testData,...
-                        'halfWindowInS',detectionHalfWinInS,'device',1,'threshold',...
-                        onEventThreshold,'detectorType',detectorType);
-                else
-                    %% Get the confidences, but use the true times.
-                    eventConfidences = detectEnergyEvents(testData,...
-                        'halfWindowInS',detectionHalfWinInS,'device',1,...
-                        'detectorType',detectorType);
-                    testingDetectedEvents = testingTimes(1);
-                    testingDetectedEvents.confidences = eventConfidences.confidences;
-                    testingDetectedEvents.timeStamps = eventConfidences.timeStamps;
-                end
-                
-                %% Add on to the existing energyEventClass for later scoring
-                detectedTestingEvents.onEventsIndex = cat(1,...
-                    detectedTestingEvents.onEventsIndex,...
-                    testingDetectedEvents.onEventsIndex);
-                detectedTestingEvents.onEventsTimes = cat(1,...
-                    detectedTestingEvents.onEventsTimes,...
-                    testingDetectedEvents.onEventsTimes);
-                detectedTestingEvents.offEventsIndex = cat(1,...
-                    detectedTestingEvents.offEventsIndex,...
-                    testingDetectedEvents.offEventsIndex);
-                detectedTestingEvents.offEventsTimes = cat(1,...
-                    detectedTestingEvents.offEventsTimes,...
-                    testingDetectedEvents.offEventsTimes);
-                detectedTestingEvents.timeStamps = cat(1,....
-                    detectedTestingEvents.timeStamps,...
-                    testingDetectedEvents.timeStamps);
-                detectedTestingEvents.confidences = cat(1,...
-                    detectedTestingEvents.confidences,...
-                    testingDetectedEvents.confidences);
-                detectedTestingEvents.onClass = cat(1,...
-                    detectedTestingEvents.onClass,...
-                    testingDetectedEvents.onClass);
-                detectedTestingEvents.offClass = cat(1,...
-                    detectedTestingEvents.offClass,...
-                    testingDetectedEvents.offClass);
-                
-                
-                %% Extract features from the current detected events.
-                testingEvents = allEnergyFeatures.retainObservations(featureTimeStamps>=startTime & ...
-                    featureTimeStamps<=endTime);
-                if ~useTrueTimes
-                    detectedEnergyFeatures = obj.extractEventData(testingDetectedEvents,...
-                        'featureType','on','windowInS',extractionWindow);
-                else
-                    detectedEnergyFeatures = testingEvents;
-                end
-                
-                if zmuvFeatures
-                    detectedEnergyFeatures = zmuv.run(detectedEnergyFeatures);
-                end
-                
-                
-                if usePca
-                    detectedEnergyPca = inputPca.run(detectedEnergyFeatures);
-                else
-                    detectedEnergyPca = detectedEnergyFeatures;
-                end
-                
-                %% Add on to the existing features
-                allTestingFeatures = catObservations(allTestingFeatures,...
-                    detectedEnergyPca);
-                
-                
-                %% Run the classifier.
-                testingClassOuts = prtClassifier.run(detectedEnergyPca);
-                
-                %% Make the assignments.
-                possibleClasses = inputFeats.uniqueClasses;
-                assignedEvents = repmat(energyEventClass,numel(possibleClasses),1);
-                
-                for eInc = 1:numel(possibleClasses)
-                    cNum = possibleClasses(eInc);
-                    assignedEvents(eInc).classNumber = cNum;
-                    assignedEvents(eInc).className = inputFeats.getClassNames(cNum);
-                    assignedEvents(eInc).house = eventTimes(1).house;
-                    assignedEvents(eInc).houseNumber = eventTimes(1).houseNumber;
-                end
-                
-                for eventInc = 1:testingClassOuts.nObservations
-                    currentClass = testingClassOuts.data(eventInc);
                     
-                    %% Find the corresponding class
-                    currentLogicals = possibleClasses == currentClass;
-                    assignedEvents(currentLogicals).onEventsTimes = ...
-                        cat(1,assignedEvents(currentLogicals).onEventsTimes,...
-                        testingClassOuts.observationInfo(eventInc).timestamp);
-                end
-                
-                
-                %% Add on to the aggregate events
-                if ~exist('assignedEventsTotal')% initialize the total events
-                    assignedEventsTotal = assignedEvents;
-                else
-                    for typeInc = 1:numel(assignedEvents)
-                        currentClass = assignedEvents(typeInc).classNumber;
-                        
-                        focusClass = false(numel(assignedEvents),1);
-                        
-                        for focusInc = 1:numel(focusClass)
-                            if assignedEventsTotal(focusInc).classNumber == currentClass
-                                focusClass(focusInc) = true;
-                            end
+                    
+                    %% Modify the features based on input options to take the
+                    % principal components and the zscore
+                    if usePca
+                        [inputFeats,inputPca,zmuv] = energyFeatures.getPca('nComponents',nPcaComponents,...
+                            'plotPca',false,'zmuv',zmuvFeatures);
+                    else
+                        inputFeats = energyFeatures;
+                        if zmuvFeatures
+                            zM = prtPreProcZmuv;
+                            zM = zM.train(energyFeatures);
+                            inputFeats = zM.run(energyFeatures);
                         end
-                        
-                        assignedEventsTotal(focusClass).onEventsTimes = ...
-                            cat(1,assignedEventsTotal(focusClass).onEventsTimes,...
-                            assignedEvents(typeInc).onEventsTimes);
-                            
-                        
                     end
+                    
+                    prtClassifier = prtClassifier.train(inputFeats);
+                end
+                
+                if findClassificationPerformance
+                    %% Are events detected or just based on truth?
+                    if ~useTrueTimes
+                        %% Detect events in the testing data.
+                        testingDetectedEvents = detectEnergyEvents(testData,...
+                            'halfWindowInS',detectionHalfWinInS,'device',1,'threshold',...
+                            onEventThreshold,'detectorType',detectorType);
+                    else
+                        %% Get the confidences, but use the true times.
+                        eventConfidences = detectEnergyEvents(testData,...
+                            'halfWindowInS',detectionHalfWinInS,'device',1,...
+                            'detectorType',detectorType);
+                        testingDetectedEvents = testingTimes(1);
+                        testingDetectedEvents.confidences = eventConfidences.confidences;
+                        testingDetectedEvents.timeStamps = eventConfidences.timeStamps;
+                    end
+                    
+                    %% Add on to the existing energyEventClass for later scoring
+                    detectedTestingEvents.onEventsIndex = cat(1,...
+                        detectedTestingEvents.onEventsIndex,...
+                        testingDetectedEvents.onEventsIndex);
+                    detectedTestingEvents.onEventsTimes = cat(1,...
+                        detectedTestingEvents.onEventsTimes,...
+                        testingDetectedEvents.onEventsTimes);
+                    detectedTestingEvents.offEventsIndex = cat(1,...
+                        detectedTestingEvents.offEventsIndex,...
+                        testingDetectedEvents.offEventsIndex);
+                    detectedTestingEvents.offEventsTimes = cat(1,...
+                        detectedTestingEvents.offEventsTimes,...
+                        testingDetectedEvents.offEventsTimes);
+                    detectedTestingEvents.timeStamps = cat(1,....
+                        detectedTestingEvents.timeStamps,...
+                        testingDetectedEvents.timeStamps);
+                    detectedTestingEvents.confidences = cat(1,...
+                        detectedTestingEvents.confidences,...
+                        testingDetectedEvents.confidences);
+                    detectedTestingEvents.onClass = cat(1,...
+                        detectedTestingEvents.onClass,...
+                        testingDetectedEvents.onClass);
+                    detectedTestingEvents.offClass = cat(1,...
+                        detectedTestingEvents.offClass,...
+                        testingDetectedEvents.offClass);
                 end
                 
                 
-                foldStop = toc(foldStart);
-                fprintf(1,['Fold ',num2str(fInc),' complete, ',num2str(foldStop),'s\n'])
+                
+                if findClassificationPerformance
+                    %% Extract features from the current detected events.
+                    testingEvents = allEnergyFeatures.retainObservations(featureTimeStamps>=startTime & ...
+                        featureTimeStamps<=endTime);
+                    if ~useTrueTimes
+                        detectedEnergyFeatures = obj.extractEventData(testingDetectedEvents,...
+                            'featureType','on','windowInS',extractionWindow,...
+                            'devices',devices,'catFeatures',catFeatures);
+                    else
+                        detectedEnergyFeatures = testingEvents;
+                    end
+                    
+                    if zmuvFeatures
+                        detectedEnergyFeatures = zmuv.run(detectedEnergyFeatures);
+                    end
+                    
+                    
+                    if usePca
+                        detectedEnergyPca = inputPca.run(detectedEnergyFeatures);
+                    else
+                        detectedEnergyPca = detectedEnergyFeatures;
+                    end
+                    
+                    %% Add on to the existing features
+                    allTestingFeatures = catObservations(allTestingFeatures,...
+                        detectedEnergyPca);
+                    
+                    
+                    %% Run the classifier.
+                    testingClassOuts = prtClassifier.run(detectedEnergyPca);
+                    
+                    %% Make the assignments.
+                    possibleClasses = inputFeats.uniqueClasses;
+                    assignedEvents = repmat(energyEventClass,numel(possibleClasses),1);
+                    
+                    for eInc = 1:numel(possibleClasses)
+                        cNum = possibleClasses(eInc);
+                        assignedEvents(eInc).classNumber = cNum;
+                        assignedEvents(eInc).className = inputFeats.getClassNames(cNum);
+                        assignedEvents(eInc).house = eventTimes(1).house;
+                        assignedEvents(eInc).houseNumber = eventTimes(1).houseNumber;
+                    end
+                    
+                    for eventInc = 1:testingClassOuts.nObservations
+                        currentClass = testingClassOuts.data(eventInc);
+                        
+                        %% Find the corresponding class
+                        currentLogicals = possibleClasses == currentClass;
+                        assignedEvents(currentLogicals).onEventsTimes = ...
+                            cat(1,assignedEvents(currentLogicals).onEventsTimes,...
+                            testingClassOuts.observationInfo(eventInc).timestamp);
+                    end
+                    
+                    
+                    %% Add on to the aggregate events
+                    if ~exist('assignedEventsTotal')% initialize the total events
+                        assignedEventsTotal = assignedEvents;
+                    else
+                        for typeInc = 1:numel(assignedEvents)
+                            currentClass = assignedEvents(typeInc).classNumber;
+                            
+                            focusClass = false(numel(assignedEvents),1);
+                            
+                            for focusInc = 1:numel(focusClass)
+                                if assignedEventsTotal(focusInc).classNumber == currentClass
+                                    focusClass(focusInc) = true;
+                                end
+                            end
+                            
+                            assignedEventsTotal(focusClass).onEventsTimes = ...
+                                cat(1,assignedEventsTotal(focusClass).onEventsTimes,...
+                                assignedEvents(typeInc).onEventsTimes);
+                            
+                            
+                        end
+                    end
+                    
+                    
+                    foldStop = toc(foldStart);
+                    fprintf(1,['Fold ',num2str(fInc),' complete, ',num2str(foldStop),'s\n'])
+                end
             end
             
             if findAssignmentPerformance
-                %% Determine how to assign power.
-                averagePowers = obj.findAveragePower(eventTimes(2:end),...
-                    'fromAggregate',fromAggregate);
-                
-                %% Now, we have the aggregated event times and the average power
-                % details, so we can find both the device ROCs and the energy
-                % assignment metrics.
-%                 for typeInc = 1:numel(eventTimes)
-%                     assignedEventsTotal(typeInc).classNumber = eventTimes(typeInc).classNumber;
-%                 end
-                
-                %% Assign power to each device
-                if ~useTrueClasses
-                    newData = obj.assignPower(assignedEventsTotal,averagePowers);
+                if strcmp(obj.name,'BLUED')
+                    averagePowers = obj.findAveragePowerBlued(eventTimes,allEnergyFeatures);
+                    
+                    %% Assign power to each device
+                    if ~useTrueClasses
+                        newData = obj.assignPowerBlued(assignedEventsTotal,averagePowers);
+                    else
+                        newData = obj.assignPowerBlued(eventTimes,averagePowers);
+                    end
+                    
+                    if findAssignmentErrors
+                        %% Remember that we're now only focusing on the aggregate data
+                        energySubset = obj.retainFeatures(1);
+                        
+                        sumData = energySubset;
+                        sumData.data = sum(newData.data(:,2:end),2);
+                        
+                        %% correct for times where the sum is greater than aggregate.
+                        greaterThan = sumData.data>energySubset.data;
+                        sumData.data(greaterThan) = energySubset.data(greaterThan);
+                        
+                        assignedPowerPerformance = energySubset.calculateAssignmentErrors(sumData);
+                    else
+                        assignedPowerPerformance = [];
+                    end
+                    
                 else
-                    newData = obj.assignPower(eventTimes,averagePowers);
+                    %% Determine how to assign power.
+                    averagePowers = obj.findAveragePower(eventTimes(2:end),...
+                        'fromAggregate',fromAggregate);
+                    
+                    %% Now, we have the aggregated event times and the average power
+                    % details, so we can find both the device ROCs and the energy
+                    % assignment metrics.
+                    %                 for typeInc = 1:numel(eventTimes)
+                    %                     assignedEventsTotal(typeInc).classNumber = eventTimes(typeInc).classNumber;
+                    %                 end
+                    
+                    %% Assign power to each device
+                    if ~useTrueClasses
+                        newData = obj.assignPower(assignedEventsTotal,averagePowers);
+                    else
+                        newData = obj.assignPower(eventTimes,averagePowers);
+                    end
+                    
+                    if findAssignmentErrors
+                        %% Evaluate the assignment performance.
+                        assignedPowerPerformance = obj.calculateAssignmentErrors(newData);
+                    else
+                        assignedPowerPerformance = [];
+                    end
                 end
-                
-                
-                %% Evaluate the assignment performance.
-                assignedPowerPerformance = obj.calculateAssignmentErrors(newData);
             else
                 assignedPowerPerformance = [];
                 newData = [];
+                averagePowers = [];
             end
             
             %% Evaluate the detection performance of the aggregated events.
             if findDetectionPerformance
                 detectionPerformance = scoreEventDetectionQuickly(detectedTestingEvents,...
-                    eventTimes(1),eventHaloInS,'onlyOn',onlyOn);
+                    eventTimes(1),eventHaloInS,'onlyOn',onlyOn,...
+                    'minThreshold',minDetectorThreshold);
             else
                 detectionPerformance = [];%scoreEventDetectionQuickly(eventTimes(1),...
-                    %eventTimes(1),eventHaloInS,'onlyOn',onlyOn);
+                %eventTimes(1),eventHaloInS,'onlyOn',onlyOn);
             end
-
+            
             
             systemResults.assignedPowerPerformance = assignedPowerPerformance;
             systemResults.detectionPerformance = detectionPerformance;
             systemResults.classificationPerformance = classificationPerformance;
             systemResults.newData = newData;
             systemResults.allEnergyFeatures = allEnergyFeatures;
+            systemResults.detectedTestingEvents = detectedTestingEvents;
+            systemResults.aggregateEvents = eventTimes(1);
+            systemResults.averagePowers = averagePowers;
             
         end
     end
