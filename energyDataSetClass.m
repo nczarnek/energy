@@ -413,8 +413,11 @@ classdef energyDataSetClass < prtDataSetClass
                     end
                     
                     lH = findobj(gcf,'tag','legend');
+                    noCat = false;
                     if isempty(lH)
-                        legend(obj.getFeatureNames(device(dInc)))
+                        legend(obj.getFeatureNames(device(dInc)),'interpreter','none')
+                        lH = findobj(gcf,'tag','legend');
+                        noCat = true;
                     end
                     xlabel(['Time (',timeScale,')'])
                     ylabel('Power (W)')
@@ -426,8 +429,10 @@ classdef energyDataSetClass < prtDataSetClass
                     if useCurrentFigure
                         %% Modify the legend.
                         legendString = lH.String;
-                        legendString = cat(2,legendString,obj.getFeatureNames(device(dInc)));
-                        legend(legendString);
+                        if ~noCat
+                            legendString = cat(2,legendString,obj.getFeatureNames(device(dInc)));
+                            legend(legendString,'interpreter','none');
+                        end
                     end
                     
                 end
@@ -1202,6 +1207,8 @@ classdef energyDataSetClass < prtDataSetClass
             assignedPower = assignedPower.setFeatureNames(featureNames);
             assignedPower = assignedPower.setFeatureInfo(featureInfo);
             
+            assignedPower.observationInfo = obj.observationInfo;
+            
         end
         
         %% Assign power to specific devices based on the current
@@ -1292,7 +1299,17 @@ classdef energyDataSetClass < prtDataSetClass
             
         end
         
-        
+        function devicePercentExplained = findDevicePercentExplained(obj,assignedPower)
+            
+            devicePercentExplained = zeros(obj.nFeatures,1);
+            
+            for dInc = 1:obj.nFeatures
+                actualEnergyUsed = obj.findComponentEnergy('device',dInc);
+                assignedEnergy = assignedPower.findComponentEnergy('device',dInc);
+                
+                devicePercentExplained(dInc,1) = assignedEnergy/actualEnergyUsed;
+            end
+        end
         
         %% Determine the error when comparing assigned to true power.
         function errorMetrics = calculateAssignmentErrors(obj,assignedPower,varargin)
@@ -1446,6 +1463,9 @@ classdef energyDataSetClass < prtDataSetClass
             % Allow allEnergyFeatures to be sent in
             options.allEnergyFeatures = energyFeatureClass;
             options.findAssignmentErrors = true;
+            options.extraSmooth = false;
+            options.extraSmoothWindowInS = 30;
+            options.comparisonData = obj;
             
             parsedOuts = prtUtilSimpleInputParser(options,varargin);
             systemParameters = parsedOuts;
@@ -1482,6 +1502,9 @@ classdef energyDataSetClass < prtDataSetClass
             xValKeys = parsedOuts.xValKeys;
             allEnergyFeatures = parsedOuts.allEnergyFeatures;
             findAssignmentErrors = parsedOuts.findAssignmentErrors;
+            extraSmooth = parsedOuts.extraSmooth;
+            extraSmoothWindowInS = parsedOuts.extraSmoothWindowInS;
+            comparisonData = parsedOuts.comparisonData;
             
             if isempty(combinedClassNames)
                 combinedClassNames = cell(numel(combinedClasses),1);
@@ -1767,7 +1790,8 @@ classdef energyDataSetClass < prtDataSetClass
                         %% Run the event detector on the training data
                         detectedTrainingEvents = detectEnergyEvents(trainData,...
                             'halfWindowInS',detectionHalfWinInS,'device',1,...
-                            'detectorType',detectorType);
+                            'detectorType',detectorType,'extraSmooth',extraSmooth,...
+                            'extraSmoothWindowInS',extraSmoothWindowInS);
                         
                         
                         tStart = tic;
@@ -1827,12 +1851,14 @@ classdef energyDataSetClass < prtDataSetClass
                         %% Detect events in the testing data.
                         testingDetectedEvents = detectEnergyEvents(testData,...
                             'halfWindowInS',detectionHalfWinInS,'device',1,'threshold',...
-                            onEventThreshold,'detectorType',detectorType);
+                            onEventThreshold,'detectorType',detectorType,'extraSmooth',extraSmooth,...
+                            'extraSmoothWindowInS',extraSmoothWindowInS);
                     else
                         %% Get the confidences, but use the true times.
                         eventConfidences = detectEnergyEvents(testData,...
                             'halfWindowInS',detectionHalfWinInS,'device',1,...
-                            'detectorType',detectorType);
+                            'detectorType',detectorType,'extraSmooth',extraSmooth,...
+                            'extraSmoothWindowInS',extraSmoothWindowInS);
                         testingDetectedEvents = testingTimes(1);
                         testingDetectedEvents.confidences = eventConfidences.confidences;
                         testingDetectedEvents.timeStamps = eventConfidences.timeStamps;
@@ -1963,7 +1989,7 @@ classdef energyDataSetClass < prtDataSetClass
                     
                     if findAssignmentErrors
                         %% Remember that we're now only focusing on the aggregate data
-                        energySubset = obj.retainFeatures(1);
+                        energySubset = comparisonData.retainFeatures(1);
                         
                         sumData = energySubset;
                         sumData.data = sum(newData.data(:,2:end),2);
@@ -1998,7 +2024,7 @@ classdef energyDataSetClass < prtDataSetClass
                     
                     if findAssignmentErrors
                         %% Evaluate the assignment performance.
-                        assignedPowerPerformance = obj.calculateAssignmentErrors(newData);
+                        assignedPowerPerformance = comparisonData.calculateAssignmentErrors(newData);
                     else
                         assignedPowerPerformance = [];
                     end
